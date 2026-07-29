@@ -42,8 +42,12 @@ _BLOCK = re.compile(
     r'\[(?P<name>[^\]]*)\]\[(?P<block>\d{8})\]\[(?P<node>[^\]]*)\]\s+'
     r'End Event\[(?P<result>[^\]]*)\]')
 _DTMF = re.compile(r'\[GETDIGIT\]\s+Inputdigit\s*=\s*(?P<d>[\dA-D\*#]+)')
-_SCREEN_FULL = re.compile(r'(?:szSendMenuData|SendData)\((?P<payload>S\$(?P<scr>HLI[A-Z0-9]+);.*?)\)')
-_SCREEN = re.compile(r'\[WV_SENDMENU\].*?S\$(?P<scr>HLI[A-Z0-9]+)')
+# 페이로드 본문에 ')' 가 들어가는 경우(예: "보험료(월납)")가 있어 탐욕 매칭 후
+# 마지막 ')' 까지 잡는다. 비탐욕(.*?)이면 첫 괄호에서 잘려 메뉴가 누락됨.
+# 파라미터 없는 화면(S$HLIA01)도 잡도록 ';' 이후는 선택.
+_SCREEN_FULL = re.compile(
+    r'(?:szSendMenuData|SendData)\(\s*(?P<payload>S\$(?P<scr>HLI[A-Z0-9]+)(?:;.*)?)\)')
+_SCREEN = re.compile(r'WV_SENDMENU.*?S\$(?P<scr>HLI[A-Z0-9]+)')
 _SCN_ANY = re.compile(r'\[(?P<scn>[가-힣A-Za-z0-9_]+\.d?xml)\]')
 _TERM = re.compile(r'TERM REASON ==>\s*(?P<r>TM_\w+)')
 
@@ -96,11 +100,25 @@ def _parse_ars_lines(ars_lines):
             _dup = re.search(r'^(S\$' + re.escape(code) + r';.*?);?:S\$' + re.escape(code) + r';',payload)
             if _dup:
                 payload = _dup.group(1)
-            if not screens or screens[-1]["code"] != code:
+            # 같은 화면코드라도 페이로드가 다르면 별개의 진행 단계다.
+            # (보이는ARS 는 HLIB00 '메뉴 리스트' 한 코드로 대→중→소분류를
+            #  연속 전송하므로, 코드만으로 합치면 흐름이 통째로 사라진다.)
+            prev = screens[-1] if screens else None
+            stub = "S$" + code
+            same_screen = (
+                prev is not None and prev["code"] == code
+                and (payload == prev["payload"]
+                     or payload == stub          # 코드만 잡힌 부분 로그
+                     or prev["payload"] == stub)
+            )
+            if same_screen:
+                if len(payload) > len(prev["payload"]):   # 더 상세한 쪽으로 보강
+                    prev["payload"] = payload
+                    if not prev.get("scn"):
+                        prev["scn"] = cur_scn[0]
+            else:
                 screens.append({"ts": ts, "code": code, "payload": payload,
                                 "scn": cur_scn[0]})
-            elif len(payload) > len(screens[-1]["payload"]):
-                screens[-1]["payload"] = payload
         md = _DTMF.search(s)
         if md and md.group("d").strip():
             dtmf.append({"ts": ts, "digit": md.group("d").strip()})
