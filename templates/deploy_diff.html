@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>시나리오 배포 변경내용</title>
+<style>
+:root{
+  --bg:#f4f5f7; --card:#fff; --line:#e3e6ea; --ink:#1c2128; --dim:#6b7684;
+  --add:#1a7f37; --addbg:#e6f4ea; --del:#c9252d; --delbg:#fdeaea;
+  --mod:#9a6700; --modbg:#fff4d6; --flow:#0a58ca; --flowbg:#e7f0fd;
+  --scr:#6f42c1; --scrbg:#f1ebfb;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.6 "Malgun Gothic","맑은 고딕",-apple-system,sans-serif}
+header{background:#fff;border-bottom:1px solid var(--line);padding:14px 20px;
+  display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:20}
+h1{font-size:17px;margin:0;font-weight:700}
+.btn{border:1px solid var(--line);background:#fff;border-radius:6px;padding:8px 14px;
+  cursor:pointer;font-size:13px;font-family:inherit}
+.btn:hover{background:#f0f2f5}
+.btn.primary{background:#0a58ca;border-color:#0a58ca;color:#fff;font-weight:600}
+.btn.primary:hover{background:#0847a5}
+.btn:disabled{opacity:.55;cursor:default}
+.wrap{max-width:1180px;margin:0 auto;padding:20px}
+.src{background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px 16px;
+  margin-bottom:16px;font-size:12.5px;color:var(--dim);display:flex;gap:24px;flex-wrap:wrap}
+.src b{color:var(--ink);font-weight:600}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:10px;margin-bottom:16px}
+.c{background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.c .n{font-size:22px;font-weight:700;line-height:1.2}
+.c .l{font-size:12px;color:var(--dim);margin-top:2px}
+.c.add .n{color:var(--add)} .c.del .n{color:var(--del)} .c.mod .n{color:var(--mod)}
+.c.flow .n{color:var(--flow)} .c.scr .n{color:var(--scr)}
+.bar{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:#fff;border-radius:20px;padding:5px 13px;
+  cursor:pointer;font-size:12.5px;user-select:none}
+.chip.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+input.f{border:1px solid var(--line);border-radius:6px;padding:7px 11px;font-size:13px;
+  width:230px;font-family:inherit}
+.file{background:#fff;border:1px solid var(--line);border-radius:8px;margin-bottom:12px;overflow:hidden}
+.fh{padding:12px 16px;display:flex;align-items:center;gap:10px;cursor:pointer;background:#fafbfc}
+.fh:hover{background:#f2f4f7}
+.fn{font-weight:600;font-size:14px}
+.tag{font-size:11px;padding:2px 8px;border-radius:11px;font-weight:600}
+.t-add{background:var(--addbg);color:var(--add)}
+.t-del{background:var(--delbg);color:var(--del)}
+.t-mod{background:var(--modbg);color:var(--mod)}
+.t-flow{background:var(--flowbg);color:var(--flow)}
+.t-scr{background:var(--scrbg);color:var(--scr)}
+.fb{border-top:1px solid var(--line);padding:6px 16px 14px;display:none}
+.file.open .fb{display:block}
+.blk{border-left:3px solid var(--line);padding:10px 0 10px 13px;margin-top:12px}
+.blk.b-add{border-color:var(--add)} .blk.b-del{border-color:var(--del)}
+.blk.b-mod{border-color:var(--mod)}
+.bt{font-weight:600;font-size:13.5px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.seq{font:11.5px ui-monospace,Consolas,monospace;color:var(--dim);
+  background:#f0f2f5;padding:1px 6px;border-radius:4px}
+.loc{font-size:12px;color:var(--dim);margin-top:3px}
+.sec{margin-top:9px}
+.sl{font-size:11.5px;font-weight:700;letter-spacing:.4px;color:var(--dim);margin-bottom:4px}
+.ch{font-size:13px;padding:3px 0}
+.ch .w{color:var(--dim)}
+.old{color:var(--del)} .new{color:var(--add);font-weight:600}
+ul.msgs{margin:2px 0 0;padding-left:17px} ul.msgs li{padding:1.5px 0;font-size:13px}
+pre.diff{background:#fafbfc;border:1px solid var(--line);border-radius:6px;
+  padding:9px 11px;overflow:auto;max-height:280px;margin:4px 0 0;
+  font:12px/1.55 ui-monospace,Consolas,monospace;white-space:pre}
+pre.diff .a{background:var(--addbg);color:var(--add);display:block}
+pre.diff .d{background:var(--delbg);color:var(--del);display:block}
+pre.diff .h{color:#8250df;display:block}
+/* 화면 미리보기 */
+.scrn{display:flex;gap:16px;flex-wrap:wrap;margin-top:6px}
+.ph{width:224px;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff}
+.ph .cap{font-size:11.5px;text-align:center;padding:4px;font-weight:700}
+.ph.before .cap{background:var(--delbg);color:var(--del)}
+.ph.after .cap{background:var(--addbg);color:var(--add)}
+.ph .tpl{font-size:10.5px;color:var(--dim);padding:5px 9px;border-bottom:1px solid var(--line);
+  background:#fafbfc;text-align:center}
+.ph .body{padding:11px 10px;min-height:110px}
+.ph .ttl{font-weight:700;font-size:13px;margin-bottom:7px}
+.ph .txt{font-size:11.5px;color:#444;margin-bottom:5px;line-height:1.45}
+.ph .b{display:block;border:1px solid #0a58ca;color:#0a58ca;border-radius:6px;
+  padding:6px;text-align:center;font-size:12px;margin-top:6px;font-weight:600}
+.ph .ret{font-size:9.5px;color:var(--dim);font-weight:400}
+.ph .bot{border-top:1px solid var(--line);padding:4px 9px;font-size:10px;color:var(--dim);
+  background:#fafbfc;text-align:center}
+.empty{text-align:center;color:var(--dim);padding:56px 20px}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid #fff;
+  border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;
+  vertical-align:-2px;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.err{background:var(--delbg);border:1px solid #f5c2c7;color:#842029;
+  padding:12px 15px;border-radius:8px}
+.touch{background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin-bottom:16px}
+.touch b{font-size:12.5px} .touch .i{display:inline-block;margin:4px 8px 0 0;font-size:12px;
+  background:var(--scrbg);color:var(--scr);padding:3px 9px;border-radius:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>시나리오 배포 변경내용</h1>
+  <button class="btn primary" id="go">변경내용 확인</button>
+  <button class="btn" id="re" title="캐시 무시하고 다시 수집·분석">강제 재분석</button>
+  <span id="st" style="font-size:12.5px;color:var(--dim)"></span>
+</header>
+<div class="wrap" id="out">
+  <div class="empty">「변경내용 확인」을 누르면 과거 배포본과 현재 운영 배포본을 비교합니다.</div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+let REP=null, FILTER={flow:1,script:1,screen:1,struct:1}, Q='';
+
+async function run(force){
+  const b=$('#go'), r=$('#re');
+  b.disabled=r.disabled=true;
+  $('#st').textContent='';
+  $('#out').innerHTML='<div class="empty"><span class="spin" style="border-color:#888;border-top-color:transparent"></span> 원격 시나리오 수집 및 분석 중…</div>';
+  try{
+    const res=await fetch('/api/deploy/check'+(force?'?force=1':''));
+    const j=await res.json();
+    if(j.error){ $('#out').innerHTML='<div class="err"><b>오류</b><br>'+esc(j.error)+(j.path?'<br><small>'+esc(j.path)+'</small>':'')+'</div>'; return; }
+    REP=j; render();
+    $('#st').textContent=(j.cached?'캐시된 결과':'분석 '+(j.elapsed||0)+'초')+' · 재배포 '+(j.meta.redeploy_count||1)+'회차';
+  }catch(e){ $('#out').innerHTML='<div class="err">요청 실패: '+esc(e.message)+'</div>'; }
+  finally{ b.disabled=r.disabled=false; }
+}
+$('#go').onclick=()=>run(false);
+$('#re').onclick=()=>run(true);
+
+function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+function render(){
+  const R=REP,S=R.summary,M=R.meta;
+  let h='';
+  const fm={full:'전체 수집',delta:'변경분만 수집',skip:'변경 없음'};
+  h+='<div class="src"><span>기준(과거) <b>'+esc(M.old.path)+'</b> · '+M.old.files+'개 / '+M.old.mb+'MB'
+    +' <i>('+(fm[M.old.fetch]||M.old.fetch)+(M.old.pulled?' '+M.old.pulled+'개':'')+')</i></span>'
+    +'<span>대상(운영) <b>'+esc(M.new.path)+'</b> · '+M.new.files+'개 / '+M.new.mb+'MB'
+    +' <i>('+(fm[M.new.fetch]||M.new.fetch)+(M.new.pulled?' '+M.new.pulled+'개':'')+')</i></span>'
+    +'<span>생성 '+esc(M.generated)+'</span></div>';
+
+  h+='<div class="cards">'
+    +card(S.files_changed,'변경된 시나리오','mod')
+    +card(S.files_added,'추가된 시나리오','add')
+    +card(S.files_removed,'삭제된 시나리오','del')
+    +card(S.blocks_modified,'변경 블록','mod')
+    +card(S.blocks_added,'추가 블록','add')
+    +card(S.blocks_removed,'삭제 블록','del')
+    +card(S.flow_changes,'흐름 변화','flow')
+    +card(S.screen_changes,'화면 변경','scr')
+    +'</div>';
+
+  if(R.screens_touched && R.screens_touched.length){
+    h+='<div class="touch"><b>영향받은 보이는ARS 화면</b><br>';
+    R.screens_touched.forEach(s=>h+='<span class="i">'+esc(s.code)+(s.name?' · '+esc(s.name):'')+'</span>');
+    h+='</div>';
+  }
+
+  h+='<div class="bar">'
+    +chip('flow','업무 흐름')+chip('script','함수처리')+chip('screen','보이는ARS 화면')
+    +chip('struct','블록 추가·삭제')
+    +'<input class="f" id="q" placeholder="시나리오/블록 검색" value="'+esc(Q)+'">'
+    +'<button class="btn" id="ex">모두 펼치기</button></div>';
+
+  if(R.added_files.length||R.removed_files.length){
+    h+='<div class="file open"><div class="fh"><span class="fn">시나리오 파일 추가 / 삭제</span></div><div class="fb">';
+    R.added_files.forEach(f=>h+='<div class="ch"><span class="tag t-add">추가</span> '+esc(f.file)+' <span class="w">('+f.blocks+' 블록)</span></div>');
+    R.removed_files.forEach(f=>h+='<div class="ch"><span class="tag t-del">삭제</span> '+esc(f.file)+' <span class="w">('+f.blocks+' 블록)</span></div>');
+    h+='</div></div>';
+  }
+
+  let shown=0;
+  R.files.forEach((f,i)=>{ const b=fileHtml(f,i); if(b){h+=b;shown++;} });
+  if(!shown && !R.added_files.length && !R.removed_files.length)
+    h+='<div class="empty">표시할 변경사항이 없습니다.</div>';
+
+  $('#out').innerHTML=h;
+  document.querySelectorAll('.fh').forEach(e=>e.onclick=()=>e.parentElement.classList.toggle('open'));
+  document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{FILTER[c.dataset.k]=!FILTER[c.dataset.k];render();});
+  const q=$('#q'); if(q){ q.oninput=()=>{Q=q.value;render();
+    const n=$('#q'); n.focus(); n.setSelectionRange(n.value.length,n.value.length);}; }
+  const ex=$('#ex'); if(ex) ex.onclick=()=>document.querySelectorAll('.file').forEach(e=>e.classList.add('open'));
+}
+function card(n,l,c){return '<div class="c '+c+'"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';}
+function chip(k,l){return '<span class="chip'+(FILTER[k]?' on':'')+'" data-k="'+k+'">'+l+'</span>';}
+
+function fileHtml(f,i){
+  const q=Q.trim().toLowerCase();
+  let blocks='',n=0;
+  if(FILTER.struct){
+    f.added_blocks.forEach(b=>{const x=briefHtml(b,'add');if(match(f,b,q)){blocks+=x;n++;}});
+    f.removed_blocks.forEach(b=>{const x=briefHtml(b,'del');if(match(f,b,q)){blocks+=x;n++;}});
+  }
+  f.changed_blocks.forEach(b=>{
+    const x=changeHtml(b); if(x&&match(f,b,q)){blocks+=x;n++;}
+  });
+  if(FILTER.flow && f.link_changes.length){
+    let l='';
+    f.link_changes.forEach(c=>{ l+='<div class="ch"><span class="tag '+(c.kind==='added'?'t-add">추가':'t-del">삭제')+'</span> '
+      +'연결 '+esc(c.from)+' → '+esc(c.to)+(c.label?' <span class="w">['+esc(c.label)+']</span>':'')+'</div>'; });
+    if(l && (!q || f.file.toLowerCase().includes(q))){
+      blocks+='<div class="blk b-mod"><div class="bt">흐름 연결 변경</div><div class="sec">'+l+'</div></div>'; n++;
+    }
+  }
+  if(!n) return '';
+  const c=f.counts;
+  let tags='';
+  if(c.changed) tags+='<span class="tag t-mod">변경 '+c.changed+'</span>';
+  if(c.added) tags+='<span class="tag t-add">추가 '+c.added+'</span>';
+  if(c.removed) tags+='<span class="tag t-del">삭제 '+c.removed+'</span>';
+  if(c.links) tags+='<span class="tag t-flow">연결 '+c.links+'</span>';
+  return '<div class="file'+(i<3?' open':'')+'"><div class="fh"><span class="fn">'+esc(f.file)+'</span>'+tags
+    +'</div><div class="fb">'+blocks+'</div></div>';
+}
+function match(f,b,q){ if(!q) return true;
+  return (f.file+' '+(b.label||'')+' '+(b.seq||'')).toLowerCase().includes(q); }
+
+function briefHtml(b,kind){
+  let h='<div class="blk b-'+kind+'"><div class="bt"><span class="tag t-'+kind+'">'
+    +(kind==='add'?'블록 추가':'블록 삭제')+'</span>'+esc(b.label||b.type)
+    +' <span class="seq">'+esc(b.seq)+'</span></div>';
+  if(b.location) h+=loc(b.location);
+  if(b.target) h+='<div class="ch"><span class="w">이동 →</span> '+esc(b.target)+'</div>';
+  if(b.cond) h+='<div class="ch"><span class="w">조건</span> <code>'+esc(b.cond)+'</code></div>';
+  if(b.screens&&b.screens.length&&FILTER.screen){
+    h+='<div class="sec"><div class="sl">보이는ARS 화면</div><div class="scrn">';
+    b.screens.forEach(s=>h+=phone(s,kind==='add'?'after':'before',
+      (s.code||'')+(s.name?' · '+s.name:''),s.title,[],s.buttons||[]));
+    h+='</div></div>';
+  }
+  return h+'</div>';
+}
+function loc(l){
+  const p=(l.menu_path||[]).join(' › ');
+  return '<div class="loc">업무 위치: '+esc(p)+(l.step_title?' · STEP '+l.step_no+' '+esc(l.step_title):'')+'</div>';
+}
+
+function changeHtml(b){
+  let inner='';
+  if(FILTER.flow && b.flow){
+    let s='';
+    b.flow.forEach(c=>{ s+='<div class="ch"><span class="w">'+esc(c.what)+'</span> '
+      +'<span class="old">'+esc(c.from)+'</span> → <span class="new">'+esc(c.to)+'</span></div>'; });
+    inner+='<div class="sec"><div class="sl">업무 흐름</div>'+s+'</div>';
+  }
+  if(FILTER.screen && b.screen){
+    inner+='<div class="sec"><div class="sl">보이는ARS 화면</div><ul class="msgs">';
+    b.screen.msgs.forEach(m=>inner+='<li>'+esc(m)+'</li>');
+    inner+='</ul><div class="scrn">';
+    const bf=b.screen.before||[], af=b.screen.after||[];
+    const n=Math.max(bf.length,af.length);
+    for(let i=0;i<n;i++){
+      if(bf[i]) inner+=phone(bf[i],'before','변경 전',bf[i].title,bf[i].texts,bf[i].buttons);
+      if(af[i]) inner+=phone(af[i],'after','변경 후',af[i].title,af[i].texts,af[i].buttons);
+    }
+    inner+='</div></div>';
+  }
+  if(FILTER.screen && b.wv_meta){
+    let s='';
+    b.wv_meta.forEach(c=>{ s+='<div class="ch"><span class="w">'+esc(c.what)+'</span> '
+      +'<span class="old">'+esc(c.from)+'</span> → <span class="new">'+esc(c.to)+'</span></div>'; });
+    inner+='<div class="sec"><div class="sl">화면/멘트 설정</div>'+s+'</div>';
+  }
+  if(FILTER.script && b.scripts){
+    b.scripts.forEach(sc=>{
+      inner+='<div class="sec"><div class="sl">함수처리 · '+esc(sc.title)
+        +' <span style="color:var(--add)">+'+sc.added+'</span> <span style="color:var(--del)">-'+sc.removed+'</span></div><pre class="diff">';
+      sc.lines.forEach(l=>{
+        const c=l.startsWith('+')?'a':l.startsWith('-')?'d':l.startsWith('@')?'h':'';
+        inner+=c?'<span class="'+c+'">'+esc(l)+'</span>':esc(l)+'\n';
+      });
+      inner+='</pre></div>';
+    });
+  }
+  if(!inner) return '';
+  let h='<div class="blk b-mod"><div class="bt">'+esc(b.label||b.type)
+    +' <span class="seq">'+esc(b.seq)+'</span>';
+  if(b.flow) h+='<span class="tag t-flow">흐름</span>';
+  if(b.screen) h+='<span class="tag t-scr">화면</span>';
+  if(b.scripts) h+='<span class="tag t-mod">함수</span>';
+  h+='</div>';
+  if(b.location) h+=loc(b.location);
+  return h+inner+'</div>';
+}
+
+function phone(s,cls,cap,title,texts,btns){
+  let h='<div class="ph '+cls+'"><div class="cap">'+esc(cap)+'</div>';
+  h+='<div class="tpl">'+esc(s.code||'-')+(s.name?' · '+esc(s.name):'')+'</div><div class="body">';
+  if(title) h+='<div class="ttl">'+esc(title)+'</div>';
+  (texts||[]).forEach(t=>h+='<div class="txt">'+esc(t)+'</div>');
+  (btns||[]).forEach(b=>{
+    const lab=b.label!==undefined?b.label:String(b);
+    const ret=b.ret!==undefined?b.ret:'';
+    h+='<div class="b">'+esc(lab)+(ret?' <span class="ret">'+esc(ret)+'</span>':'')+'</div>';
+  });
+  h+='</div>';
+  const f=s.flags||{};
+  if(f.BOT||f.BTNF) h+='<div class="bot">하단 '+esc(f.BOT||'')+(f.BTNF?' · 상담원 '+esc(f.BTNF):'')+'</div>';
+  return h+'</div>';
+}
+</script>
+</body>
+</html>

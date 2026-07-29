@@ -1,0 +1,26 @@
+cat > .gitignore << 'EOF'
+# 인증/설정 (민감정보)
+ars_auth.json
+config.json
+config.json.backup_*
+
+# 데이터베이스
+*.db
+*.db-shm
+*.db-wal
+
+# 캐시
+__pycache__/
+.block_index_cache/
+scenario_cache/
+*.pyc
+
+# 로그
+logs/
+
+# 백업
+*.zip
+
+# PyCharm
+.idea/
+EOF
