@@ -282,6 +282,7 @@ RE_WAITOK    = re.compile(r'\[WAITCALL\]\s+WaitCall\s+Success!')
 RE_CUSTID    = re.compile(r'app\.CustID\s*:?\s*(\d+)')
 RE_PHONE     = re.compile(r'(?:ani\[|ANI\[|call_ani\()(\d{9,12})')
 RE_TIME      = re.compile(r'(\d{2}:\d{2}:\d{2})')
+RE_DATETIME  = re.compile(r'(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})')
 
 
 def _channel_of(line):
@@ -290,8 +291,17 @@ def _channel_of(line):
 
 
 def _time_of(line):
+    """HH:MM:SS (콜 경계 시각 — 날짜는 UCID 앞 8자리에서 구함)"""
     m = RE_TIME.search(line)
     return m.group(1) if m else None
+
+
+def _datetime_of(line):
+    """'YYYY-MM-DD HH:MM:SS' (표시용). 날짜 접두부가 없으면 HH:MM:SS 만."""
+    m = RE_DATETIME.search(line)
+    if m:
+        return f'{m.group(1)} {m.group(2)}'
+    return _time_of(line)
 
 
 class _ChannelStateMachine:
@@ -709,6 +719,7 @@ class ArsLogFetcher:
 
         Returns:
             {'success', 'pattern', 'result_count', 'results':[{line,server,type,file,timestamp}], 'errors'}
+            timestamp 은 표시용 'YYYY-MM-DD HH:MM:SS' (접두부 없으면 HH:MM:SS).
         """
         try:
             rx = re.compile(pattern)
@@ -756,7 +767,7 @@ class ArsLogFetcher:
                                 'server': label,
                                 'type': 'ARS',
                                 'file': fname,
-                                'timestamp': _time_of(line),
+                                'timestamp': _datetime_of(line),
                             })
                     del data  # 다음 파일 전에 해제
         finally:

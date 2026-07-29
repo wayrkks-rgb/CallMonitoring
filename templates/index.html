@@ -1366,6 +1366,51 @@
                 .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         }
 
+        // ── 타임스탬프 표시 ('MM-DD HH:MM:SS' — 연도만 생략) ──
+        const _RE_TS_FULL = /(\d{4})-(\d{2})-(\d{2})[ T]+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)/;
+        const _RE_TS_TIME = /(\d{2}:\d{2}:\d{2}(?:\.\d+)?)/;
+
+        // 날짜 힌트 → 'MM-DD'. 오탐(전화번호 등)을 피하려 선두만 본다:
+        //   'YYYY-MM-DD …' (로그 원문 접두부) 또는 'YYYYMMDD…' (UCID)
+        function _mmdd(hint) {
+            if (!hint) return '';
+            const s = String(hint);
+            const m = s.match(/^\s*(\d{4})-?(\d{2})-?(\d{2})/);
+            if (!m) return '';
+            const mm = +m[2], dd = +m[3];
+            if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return '';
+            return `${m[2]}-${m[3]}`;
+        }
+
+        /**
+         * 타임스탬프를 'MM-DD HH:MM:SS' 로 정규화.
+         *  ts   : 'YYYY-MM-DD HH:MM:SS.mmm' | 'HH:MM:SS' | null
+         *  hint : ts 에 날짜가 없을 때 쓸 날짜 출처 (원문 라인 / 'YYYY-MM-DD' / UCID)
+         *  날짜를 끝내 못 구하면 시각만 그대로 반환.
+         */
+        function fmtTs(ts, hint) {
+            const s = (ts == null ? '' : String(ts)).trim();
+            if (!s) return '';
+            const dm = s.match(_RE_TS_FULL);
+            if (dm) return `${dm[2]}-${dm[3]} ${dm[4]}`;
+            const tm = s.match(_RE_TS_TIME);
+            if (!tm) return s;
+            const d = _mmdd(hint);
+            return d ? `${d} ${tm[1]}` : tm[1];
+        }
+
+        // ARS 콜의 종료시각 힌트 — 자정을 넘긴 콜은 UCID 날짜 +1일
+        function _callEndHint(call) {
+            const ucid = String(call.ucid || '');
+            const st = call.start_time || '', et = call.end_time || '';
+            if (!/^\d{8}/.test(ucid)) return '';
+            if (!st || !et || et >= st) return ucid;
+            const d = new Date(`${ucid.slice(0,4)}-${ucid.slice(4,6)}-${ucid.slice(6,8)}T00:00:00`);
+            d.setDate(d.getDate() + 1);
+            const p = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+        }
+
         function onSearchModeChange(mode) {
             _searchMode = mode;
             stopAutoRefresh();
@@ -1577,7 +1622,7 @@
             return (rawLines || []).map(l => {
                 const s = (l || '').replace(/\r?\n$/, '');
                 const m = s.match(/(\d{2}:\d{2}:\d{2})/);
-                const ts = m ? m[1] : '(시간 없음)';
+                const ts = m ? fmtTs(m[1], s) : '(시간 없음)';
                 const tsClass = m ? 'timeline-ts' : 'timeline-ts no-ts';
 
                 // 접두부 제거 → [채널] [태그] 내용 분리
@@ -1622,7 +1667,7 @@
         function timelineRowsObj(lines) {
             return (lines || []).map(item => {
                 const tsClass = item.timestamp ? 'timeline-ts' : 'timeline-ts no-ts';
-                const tsText  = item.timestamp || '(시간 없음)';
+                const tsText  = fmtTs(item.timestamp, item.line) || '(시간 없음)';
                 return `<div class="timeline-row"><span class="${tsClass}">${tsText}</span><span class="timeline-content">${esc(item.line)}</span></div>`;
             }).join('');
         }
@@ -1648,12 +1693,12 @@
                 const d = _dxmlOf(s);
                 if (d && !_isSubDxml(d) && (cur === null || cur.dxml !== d)) {
                     const tm = s.match(/(\d{2}:\d{2}:\d{2})/);
-                    cur = { dxml: d, time: tm ? tm[1] : '', lines: [], subs: {} };
+                    cur = { dxml: d, time: tm ? fmtTs(tm[1], s) : '', lines: [], subs: {} };
                     segs.push(cur);
                 }
                 if (!cur) {
                     const tm = s.match(/(\d{2}:\d{2}:\d{2})/);
-                    cur = { dxml: '(콜 시작)', time: tm ? tm[1] : '', lines: [], subs: {} };
+                    cur = { dxml: '(콜 시작)', time: tm ? fmtTs(tm[1], s) : '', lines: [], subs: {} };
                     segs.push(cur);
                 }
                 cur.lines.push(s);
@@ -1717,7 +1762,7 @@
             const rows = calls.map((call, idx) => {
                 const vgwCnt = call.vgw ? (call.vgw.session_count || 0) : 0;
                 return `<tr data-idx="${idx}" onclick="showInboundCall(${idx}, this)">
-                    <td>${esc(call.start_time)} ~ ${esc(call.end_time)}</td>
+                    <td>${esc(fmtTs(call.start_time, call.ucid))} ~ ${esc(fmtTs(call.end_time, _callEndHint(call)))}</td>
                     <td>${esc(call.cust_id) || '-'}</td>
                     <td>${esc(call.phone) || '-'}</td>
                     <td>${esc(call.server)}</td>
@@ -1779,7 +1824,7 @@
                     <span style="font-size:11px; font-weight:700; color:#fff; background:#f0ad4e; padding:2px 8px; border-radius:10px;">ARS</span>
                     <strong>${esc(call.server)}</strong>
                     <span style="color:#555;">채널 ${esc(call.channel)}</span>
-                    <span style="color:#555;">${esc(call.start_time)} ~ ${esc(call.end_time)}</span>
+                    <span style="color:#555;">${esc(fmtTs(call.start_time, call.ucid))} ~ ${esc(fmtTs(call.end_time, _callEndHint(call)))}</span>
                     <span style="font-size:11px; color:#999;">(${esc(call.end_by)})</span>
                 </div>
                 <div class="server-info" style="margin-bottom:8px;">
@@ -1809,7 +1854,7 @@
 
             let rows = flowResults.map((r, idx) => {
                 const hostStr = (r.hostnames || []).join(', ') || '-';
-                const ts      = r.first_timestamp || '-';
+                const ts      = fmtTs(r.first_timestamp) || '-';
                 const keyShort = r.session_key.length > 40
                     ? r.session_key.substring(0, 40) + '…'
                     : r.session_key;
@@ -1858,7 +1903,7 @@
 
             const rows = sessionResult.flow_lines.map(item => {
                 const tsClass = item.timestamp ? 'timeline-ts' : 'timeline-ts no-ts';
-                const tsText  = item.timestamp || '(시간 없음)';
+                const tsText  = fmtTs(item.timestamp, item.line) || '(시간 없음)';
                 // XSS 방지
                 const safeContent = (item.line || '')
                     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -1961,7 +2006,7 @@
                         div.className = 'timeline-row';
                         div.style = 'border-bottom:1px solid #eef0f3; padding:6px 0;';
                         div.innerHTML = `
-                            <span class="timeline-ts">${item.timestamp || '(시간 없음)'}</span>
+                            <span class="timeline-ts">${fmtTs(item.timestamp, item.line) || '(시간 없음)'}</span>
                             ${srvBadge}
                             <span class="timeline-content">${safeContent}</span>`;
                         container.appendChild(div);
@@ -2693,8 +2738,8 @@
                 return `<tr>
                     <td style="text-align:center;">${r.no}</td>
                     <td class="session-key-cell">${r.session_key}</td>
-                    <td style="text-align:center; font-family:monospace;">${r.start_time}</td>
-                    <td style="text-align:center; font-family:monospace;">${r.end_time}</td>
+                    <td style="text-align:center; font-family:monospace;">${esc(fmtTs(r.start_time) || r.start_time)}</td>
+                    <td style="text-align:center; font-family:monospace;">${esc(fmtTs(r.end_time) || r.end_time)}</td>
                     <td style="font-family:monospace;">${r.phone}</td>
                     <td style="font-family:monospace;">${r.ucid}</td>
                     <td style="font-family:monospace; font-size:11px;">${r.call09}</td>
@@ -2711,8 +2756,8 @@
                             <tr>
                                 <th style="width:40px;">#</th>
                                 <th>세션키</th>
-                                <th style="width:80px;">시작</th>
-                                <th style="width:80px;">종료</th>
+                                <th style="width:120px;">시작</th>
+                                <th style="width:120px;">종료</th>
                                 <th>전화번호</th>
                                 <th>UCID</th>
                                 <th>CALL09</th>

@@ -316,9 +316,13 @@ class _NoopConn:
 
 
 def _time_of_safe(line):
-    """라인에서 HH:MM:SS 추출 (실패 시 '')."""
+    """라인에서 표시용 'YYYY-MM-DD HH:MM:SS' 추출 (날짜 접두부 없으면 HH:MM:SS, 실패 시 '')."""
     import re
-    m = re.search(r'\b(\d{2}:\d{2}:\d{2})\b', line or '')
+    s = line or ''
+    m = re.search(r'\b(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\b', s)
+    if m:
+        return f'{m.group(1)} {m.group(2)}'
+    m = re.search(r'\b(\d{2}:\d{2}:\d{2})\b', s)
     return m.group(1) if m else ''
 
 
