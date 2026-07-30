@@ -7,6 +7,7 @@ SSH 원격 로그 수집 모듈
 - 서버측 grep으로 전송량 최소화
 """
 
+import shlex
 import subprocess
 import logging
 from pathlib import Path
@@ -87,8 +88,17 @@ class OpenSSHLogFetcher:
         ssh_cmd.append(ssh_target)
         return ssh_cmd
 
-    def _execute_ssh(self, ssh_cmd, timeout=30):
-        """SSH 명령 실행 및 결과 반환"""
+    def _execute_ssh(self, ssh_cmd, timeout=30, ok_codes=(0,)):
+        """
+        SSH 명령 실행 및 결과 반환.
+
+        Args:
+            ok_codes: 정상으로 볼 원격 종료코드들.
+                grep/cat 은 '매칭 없음 / 파일 없음' 에도 1 을 반환하므로
+                검색 계열은 (0, 1) 을 넘겨 정상 무결과와 실제 장애를 구분한다.
+                (구분하지 않으면 로그가 없는 서버마다 가짜 오류가 쌓여
+                 진짜 SSH 장애를 가린다.)
+        """
         ssh_target = ssh_cmd[-2] if len(ssh_cmd) > 2 else 'unknown'
 
         try:
@@ -100,7 +110,7 @@ class OpenSSHLogFetcher:
                 encoding='utf-8', errors='ignore'
             )
 
-            if result.returncode != 0:
+            if result.returncode not in ok_codes:
                 error_msg = result.stderr.strip()
                 logger.error(f"SSH 오류 (코드 {result.returncode}): {error_msg}")
                 return None, self._classify_error(ssh_target, error_msg)
@@ -192,7 +202,8 @@ class OpenSSHLogFetcher:
         ssh_cmd.append(remote_cmd)
 
         logger.info(f"서버측 grep: {ssh_target} (패턴: {grep_pattern[:50]}...)")
-        lines, error = self._execute_ssh(ssh_cmd, timeout=60)
+        # grep: 0=매칭, 1=매칭 없음(정상), 2+=실제 오류
+        lines, error = self._execute_ssh(ssh_cmd, timeout=60, ok_codes=(0, 1))
 
         if error:
             return [], [error]
@@ -232,7 +243,8 @@ class OpenSSHLogFetcher:
         ssh_cmd.append(remote_cmd)
 
         logger.info(f"로그 수집: {ssh_target}")
-        lines, error = self._execute_ssh(ssh_cmd, timeout=60)
+        # cat: 대상 파일이 하나도 없으면 1 (해당 날짜 로그 미존재 = 정상)
+        lines, error = self._execute_ssh(ssh_cmd, timeout=60, ok_codes=(0, 1))
 
         if error:
             return [], [error]
@@ -306,12 +318,17 @@ class OpenSSHLogFetcher:
         """
         grep 명령 생성.
         use_extended=True이면 grep -E (확장 정규식, | 지원)
+
+        패턴은 사용자 입력(검색어/custId)과 로그에서 뽑은 값(sessionKey)에서 오므로
+        반드시 shlex.quote 로 감싼다. 직접 따옴표로 감싸면 패턴에 작은따옴표가
+        들어올 때 셸 인용이 깨져 검색이 실패하고, 원격 명령이 주입될 수 있다.
+        (경로는 {YYYY-MM-DD} 미지정 시 '*' 글롭을 셸이 전개해야 하므로 인용하지 않음)
         """
         if not file_patterns:
             return None
         file_list = ' '.join(file_patterns)
         flag = '-Eh' if use_extended else '-h'
-        return f"grep {flag} '{grep_pattern}' {file_list} 2>/dev/null"
+        return f"grep {flag} -- {shlex.quote(grep_pattern)} {file_list} 2>/dev/null"
 
     def test_connection(self, server_config):
         """SSH 연결 테스트"""

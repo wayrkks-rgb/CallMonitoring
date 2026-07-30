@@ -3125,9 +3125,12 @@
                 const chips=p.screen_flow.map((s,i)=>{
                     const last=(i===p.screen_flow.length-1);
                     const arw=i>0?'<span class="arw">›</span>':'';
-                    return `${arw}<span class="pscreen ${last?'last':''}" title="${esc(s.code)} (클릭: 화면 보기)" onclick='openScreenModal(${JSON.stringify(s.code)}, ${JSON.stringify(s.name||'')}, ${JSON.stringify(s.payload||'')})'>${esc(s.name||s.code)}</span>`;
+                    // label = 화면 제목(TIT) 기반 실제 메뉴명, 없으면 템플릿명(name)
+                    const cap=s.label||s.name||s.code;
+                    const tip=`${s.code}${s.name?' · '+s.name:''}${s.ts?' · '+s.ts:''} (클릭: 화면 보기)`;
+                    return `${arw}<span class="pscreen ${last?'last':''}" title="${esc(tip)}" onclick='openScreenModal(${JSON.stringify(s.code)}, ${JSON.stringify(s.name||'')}, ${JSON.stringify(s.payload||'')})'>${esc(cap)}</span>`;
                 }).join('');
-                screenHtml=`<div class="precheck-screens"><span class="lbl">📱 화면 진행</span>${chips}</div>`;
+                screenHtml=`<div class="precheck-screens"><span class="lbl">📱 화면 진행 (${p.screen_flow.length})</span>${chips}</div>`;
             }
             const flowBtn = (p.screen_flow && p.screen_flow.length)
                 ? `<button onclick='openScreenFlowModal(_lastPrecheck.screen_flow, "📱 이 콜의 화면 진행 흐름")'><i class="fas fa-images"></i> 화면 흐름 전체 보기</button>` : '';

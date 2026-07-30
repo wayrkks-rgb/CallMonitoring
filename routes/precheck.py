@@ -50,6 +50,19 @@ _SCREEN_FULL = re.compile(
 _SCREEN = re.compile(r'WV_SENDMENU.*?S\$(?P<scr>HLI[A-Z0-9]+)')
 _SCN_ANY = re.compile(r'\[(?P<scn>[가-힣A-Za-z0-9_]+\.d?xml)\]')
 _TERM = re.compile(r'TERM REASON ==>\s*(?P<r>TM_\w+)')
+# SendData 는 payload 를 ':' 로 이어 2번 이상 반복해 보낸다.
+# 두 번째 사본부터는 다음 화면 데이터이므로 첫 사본만 남긴다.
+# (코드가 같은 경우만 잘라내면 ':S$HLIB00' 처럼 다른 코드로 이어진 잔여물이
+#  남아 화면에 'S$HLI…' 가 그대로 노출되고, 다음 화면의 메뉴까지 섞여 들어온다)
+_SCR_DUP = re.compile(r':S\$HLI[A-Z0-9]+')
+
+
+def _first_screen_payload(payload):
+    """payload 에서 첫 화면분만 반환 (다음 화면 경계 ':S$HLIxxx' 에서 절단)."""
+    if not payload:
+        return payload
+    m = _SCR_DUP.search(payload)
+    return payload[:m.start()].rstrip(';') if m else payload
 
 SENTINEL = "99999999"
 _RENDER_SCN = {"W_WebVoicePlay.dxml", "W_WebVoice_Main.dxml"}
@@ -97,9 +110,7 @@ def _parse_ars_lines(ars_lines):
             is_webvoice = True
             code = msc.group("scr")
             payload = mfull.group("payload") if mfull else ("S$" + code)
-            _dup = re.search(r'^(S\$' + re.escape(code) + r';.*?);?:S\$' + re.escape(code) + r';',payload)
-            if _dup:
-                payload = _dup.group(1)
+            payload = _first_screen_payload(payload)
             # 같은 화면코드라도 페이로드가 다르면 별개의 진행 단계다.
             # (보이는ARS 는 HLIB00 '메뉴 리스트' 한 코드로 대→중→소분류를
             #  연속 전송하므로, 코드만으로 합치면 흐름이 통째로 사라진다.)
@@ -156,20 +167,51 @@ def _biz_name(scn):
     stem = re.sub(r'\.(dxml|xml)$', '', scn or '')
     return _BIZ_NAME.get(stem, stem.replace('W_', ''))
 
+_TIT = re.compile(r'(?:^|;)TIT\$[^$;]*\$[^$;]*\$(?P<t>[^;]+)')
+
+
+def _screen_label(s):
+    """
+    요약에 쓸 화면 라벨.
+
+    화면코드 이름(_screen_name)은 템플릿명("메뉴 리스트")이라, 같은 코드로
+    대→중→소분류를 연속 전송하는 보이는ARS 에선 모든 단계가 같은 이름이 되어
+    중복 제거에 전부 합쳐진다. 실제 화면 제목(TIT)이 있으면 그걸 우선 쓴다.
+    """
+    m = _TIT.search(s.get("payload") or "")
+    if m:
+        t = _first_screen_payload(m.group("t")).replace("|", " ").strip()
+        if t:
+            return t[:40]
+    return _screen_name(s["code"])
+
+
 def _service_flow(flow, screens):
-    """의미있는 서비스 흐름 요약: 시나리오 전환 + 화면(메뉴) 이름."""
-    seq = []
+    """
+    의미있는 서비스 흐름 요약: 시나리오 전환 + 화면(메뉴)을 시간순으로 병합.
+
+    시나리오와 화면을 각각 따로 이어붙이면 '시나리오들 > 화면들' 순서가 되어
+    실제 진행 순서와 달라지고, 뒤쪽(메뉴)이 통째로 잘려 보인다. ts 로 병합한다.
+    """
+    items = []
     for f in flow:
         scn = f.get("scn", "")
         if _SKIP_SCN.search(scn):
             continue
         nm = _biz_name(scn)
-        if nm and (not seq or seq[-1] != nm):
-            seq.append(nm)
-    # 화면코드로 보강 (메뉴 선택 흐름)
+        if nm:
+            items.append((f.get("ts") or "", 0, nm))
     for s in screens:
-        nm = _screen_name(s["code"])
-        if nm and (not seq or seq[-1] != nm):
+        nm = _screen_label(s)
+        if nm:
+            items.append((s.get("ts") or "", 1, nm))
+
+    # ts 우선 정렬 (ts 없는 항목은 원래 순서 유지 — sort 안정성 이용)
+    items.sort(key=lambda x: (x[0] == "", x[0]))
+
+    seq = []
+    for _, _, nm in items:
+        if not seq or seq[-1] != nm:
             seq.append(nm)
     return seq
 
@@ -226,7 +268,9 @@ def _build_precheck(ars_lines, env, folder=None, call_meta=None):
     elif parsed["has_error"]:
         end_type = "오류 발생"
 
-    screen_flow = [{"code": s["code"], "name": _screen_name(s["code"]), "ts": s["ts"],
+    # label: 화면 제목(TIT) 기반 실제 메뉴명. 없으면 화면코드 이름(템플릿명).
+    screen_flow = [{"code": s["code"], "name": _screen_name(s["code"]),
+                    "label": _screen_label(s), "ts": s["ts"],
                     "payload": s.get("payload", "S$" + s["code"]), "scn": s.get("scn")}
                    for s in parsed["screens"]]
     last_screen = screen_flow[-1] if screen_flow else None
@@ -237,7 +281,17 @@ def _build_precheck(ars_lines, env, folder=None, call_meta=None):
     reason = TERM_DESC.get(term or "", end_by or "")
     scr_txt = f" · 화면 '{last_screen['name']}'" if last_screen else ""
     svc_flow = _service_flow(flow, parsed["screens"])
-    flow_summary = " > ".join(svc_flow[:6]) if svc_flow else where
+    # 요약은 길어질 수 있어 상한을 두지만, 잘렸으면 반드시 표시한다.
+    # (예전엔 [:6] 으로 조용히 잘려 메뉴 흐름이 중간에 끊긴 것처럼 보였다.
+    #  전체 단계는 service_flow / screen_flow 로 그대로 내려보낸다.)
+    FLOW_SUMMARY_MAX = 12
+    if not svc_flow:
+        flow_summary = where
+    else:
+        shown = svc_flow[:FLOW_SUMMARY_MAX]
+        flow_summary = " > ".join(shown)
+        if len(svc_flow) > FLOW_SUMMARY_MAX:
+            flow_summary += f" > … (총 {len(svc_flow)}단계)"
     interpretation = f"[{flow_summary}] 흐름 ㆍ {reason or end_type}(으)로 종료"
 
     return {

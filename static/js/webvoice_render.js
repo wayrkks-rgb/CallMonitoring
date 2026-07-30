@@ -126,6 +126,18 @@ const WV_PROVIDER = [
 })();
 
 // ── 프로토콜 파서 ─────────────────────────────────────────
+
+/* SendData 는 payload 를 ':' 로 이어 2번 이상 반복 전송한다.
+ * 두 번째 사본부터는 다음 화면 데이터 → 첫 화면분만 남긴다.
+ * 서버(precheck.py)에서도 같은 절단을 하지만, 다른 경로로 들어온
+ * payload 도 있으므로 렌더러에서 한 번 더 방어한다. */
+const _RE_WV_DUP = /:S\$HLI[A-Z0-9]+/;
+function _wvDedup(payload) {
+  if (!payload) return payload;
+  const m = _RE_WV_DUP.exec(payload);
+  return m ? payload.slice(0, m.index).replace(/;+$/, '') : payload;
+}
+
 function _wvParse(payload) {
   return (payload || '').split(';').filter(s => s).map(s => s.split('$'));
 }
@@ -133,8 +145,21 @@ function _wvEsc(s) {
   return (s == null ? '' : String(s)).replace(/[&<>"]/g,
     m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
 }
-// 프로토콜 구분자(|)를 공백으로 편 뒤 이스케이프 — 항상 이 함수로 출력
-function _wvText(s) { return _wvEsc((s || '').replace(/\|/g, ' ')); }
+
+/* 화면 경계에서 잘려 텍스트 필드에 붙어버린 프로토콜 잔여물 제거.
+ * 예: '대출:S' → '대출',  '제목:S$HLIA01' → '제목',  '$HLIA01;TIT$…' → ''
+ * (경계가 필드 중간에 걸리면 값 뒤에 'S$HLIxxx…' 가 남아 화면에 노출된다) */
+function _wvStripResidue(s) {
+  return String(s == null ? '' : s)
+    .replace(/\$?S?\$HLI[A-Z0-9]+[\s\S]*$/, '')   // 'S$HLIxxx…' / '$HLIxxx…' 이후 전부
+    .replace(/:\s*S?\$?\s*$/, '')                 // 경계 잔여 꼬리 ':S' / ':'
+    .trim();
+}
+
+// 프로토콜 구분자(|)를 공백으로 편 뒤 잔여물 제거 + 이스케이프 — 항상 이 함수로 출력
+function _wvText(s) {
+  return _wvEsc(_wvStripResidue(String(s == null ? '' : s).replace(/\|/g, ' ')));
+}
 
 // 스프라이트 셀 → background-position (col: 0-base, row: 0=진회색 1=주황)
 function _wvCell(col, cols, row) {
@@ -167,7 +192,7 @@ function _wvMsgImg(parts) {
 
 // ── 프로토콜 → 폰 목업 HTML ───────────────────────────────
 function renderWebVoiceScreen(code, name, payload) {
-  const kv = _wvParse(payload || ('S$' + code));
+  const kv = _wvParse(_wvDedup(payload) || ('S$' + code));
   const g = k => kv.filter(p => p && p[0] === k);
   const mute = g('MUTE');
   const muteOn = mute.length && mute[0][2] === 'ON';
