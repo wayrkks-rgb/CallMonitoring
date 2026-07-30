@@ -68,6 +68,34 @@ def load_cfg():
     return cfg
 
 
+def save_cfg(patch):
+    """
+    시나리오 경로/접속 설정 저장 (config.json 의 scenario_deploy 블록).
+    DEFAULTS 에 있는 키만 반영하고, verify 는 허용값으로 정규화한다.
+    반환: (ok, cfg, error)
+    """
+    from config_manager import load_config, save_config
+
+    cfg = load_cfg()
+    for k in DEFAULTS:
+        if k in (patch or {}):
+            cfg[k] = str(patch[k] if patch[k] is not None else "").strip()
+    if cfg.get("verify") not in ("hash", "fast"):
+        cfg["verify"] = "hash"
+    if not cfg.get("base"):
+        return False, cfg, "시나리오 기준 경로(base)를 입력하세요"
+    if not cfg.get("new_dir") or not cfg.get("old_dir"):
+        return False, cfg, "운영/과거 폴더명을 입력하세요"
+
+    full = load_config()
+    if full is None:
+        return False, cfg, "config.json 을 읽을 수 없습니다"
+    full["scenario_deploy"] = cfg
+    if not save_config(full):
+        return False, cfg, "config.json 저장 실패"
+    return True, cfg, None
+
+
 def _remote_dir(cfg, slot):
     parts = [cfg["base"].rstrip("\\"), cfg["new_dir"] if slot == "new" else cfg["old_dir"]]
     if cfg.get("output_dir"):

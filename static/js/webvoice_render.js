@@ -135,12 +135,20 @@ const _RE_WV_DUP = /:S\$HLI[A-Z0-9]+/;
 function _wvDedup(payload) {
   if (!payload) return payload;
   const m = _RE_WV_DUP.exec(payload);
-  return m ? payload.slice(0, m.index).replace(/;+$/, '') : payload;
+  let p = m ? payload.slice(0, m.index) : payload;
+  return p.replace(_RE_WV_TAIL, '').replace(/^[\s'"(]+|[\s;'")]+$/g, '');
 }
 
+/* 세그먼트 구분자는 ';' 또는 ':' 이지만 '바로 뒤에 KEY$ 가 오는 경우'만이다.
+ * 텍스트 값에 CSS 가 들어오므로("font-size: 22px; color: #FF6600")
+ * 단순 split(';') 은 값을 중간에서 끊고 ':TXT$0$L$' 같은 문자열을 노출시킨다. */
+const _RE_WV_SEG = /[;:](?=[A-Z][A-Z0-9_]{0,9}\$)/;
 function _wvParse(payload) {
-  return (payload || '').split(';').filter(s => s).map(s => s.split('$'));
+  return (payload || '').split(_RE_WV_SEG).filter(s => s).map(s => s.split('$'));
 }
+
+/* 로그의 함수 호출 결과 꼬리 제거 (sResultCode(...) 등) */
+const _RE_WV_TAIL = /[;'"\s)]*\b(?:sResultCode|sSelectDtmf|nUserDataSize|sUserData|sRetData)\b\s*\([\s\S]*$/;
 function _wvEsc(s) {
   return (s == null ? '' : String(s)).replace(/[&<>"]/g,
     m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
@@ -156,9 +164,40 @@ function _wvStripResidue(s) {
     .trim();
 }
 
-// 프로토콜 구분자(|)를 공백으로 편 뒤 잔여물 제거 + 이스케이프 — 항상 이 함수로 출력
+// 프로토콜 구분자(|)를 공백으로 편 뒤 잔여물 제거 + 이스케이프 (마크업 없는 값용)
 function _wvText(s) {
   return _wvEsc(_wvStripResidue(String(s == null ? '' : s).replace(/\|/g, ' ')));
+}
+
+/* ── 표시용 마크업 허용 ─────────────────────────────────────
+ * 로그 텍스트에는 실제 화면과 동일한 마크업이 들어온다.
+ *   <font style='font-size: 22px; color: #FF6600'>한화생명</font><br>
+ * 통째로 이스케이프하면 태그가 글자로 보이므로(이전 증상) 렌더링해야 한다.
+ * 로그 내용은 신뢰할 수 없으니 '전부 이스케이프 → 화이트리스트만 복원' 방식으로
+ * 처리한다. script/iframe, on... 이벤트 속성, href 는 절대 복원되지 않는다. */
+const _WV_TAG_OK = new Set(['br', 'b', 'strong', 'i', 'em', 'u', 'font', 'span', 'p', 'small']);
+const _WV_ATTR_OK = new Set(['style', 'color', 'size', 'face', 'align']);
+const _RE_WV_ATTR = /([a-zA-Z-]+)\s*=\s*(?:&quot;([^&]*?)&quot;|'([^']*?)'|([^\s'"&]+))/g;
+const _RE_WV_TAG = /&lt;(\/?)\s*([a-zA-Z][a-zA-Z0-9]*)((?:\s+[a-zA-Z-]+\s*=\s*(?:&quot;[^&]*?&quot;|'[^']*?'|[^\s'"&]+))*)\s*(\/?)&gt;/g;
+
+function _wvHtml(s) {
+  const esc = _wvEsc(_wvStripResidue(String(s == null ? '' : s)));
+  return esc.replace(_RE_WV_TAG, (full, close, tag, attrs, selfClose) => {
+    const t = tag.toLowerCase();
+    if (!_WV_TAG_OK.has(t)) return full;          // 허용 외 태그는 글자로 그대로
+    if (close) return `</${t}>`;
+    let out = '';
+    let m;
+    _RE_WV_ATTR.lastIndex = 0;
+    while ((m = _RE_WV_ATTR.exec(attrs || ''))) {
+      const k = m[1].toLowerCase();
+      const v = (m[2] != null ? m[2] : m[3] != null ? m[3] : m[4]) || '';
+      if (!_WV_ATTR_OK.has(k)) continue;
+      if (/url\s*\(|expression|javascript:|position\s*:|@import/i.test(v)) continue;
+      out += ` ${k}="${v.replace(/["\\]/g, '')}"`;
+    }
+    return `<${t}${out}${selfClose ? ' /' : ''}>`;
+  });
 }
 
 // 스프라이트 셀 → background-position (col: 0-base, row: 0=진회색 1=주황)
@@ -201,13 +240,14 @@ function renderWebVoiceScreen(code, name, payload) {
   g('NOT').forEach(p => {
     if (p[2] === 'ON') {
       body += `<div class="wvm-info"><span class="wv-ico wv-ico-notice"></span>` +
-              `<span>${_wvText(p[4])}</span></div>`;
+              `<span>${_wvHtml(p[4])}</span></div>`;
     }
   });
   g('IMG').forEach(p => { body += `<div class="wvm-msg">${_wvMsgImg(p)}</div>`; });
-  g('TIT').forEach(p => { if (p[3]) body += `<div class="wvm-tit">${_wvText(p[3])}</div>`; });
-  g('TXT').forEach(p => { if (p[3]) body += `<div class="wvm-txt">${_wvText(p[3])}</div>`; });
-  g('STR').forEach(p => { if (p[2]) body += `<div class="wvm-str">${_wvText(p[2])}</div>`; });
+  // TIT/TXT/STR 은 마지막 필드가 본문 (필드 수가 화면마다 달라 뒤에서 집는다)
+  g('TIT').forEach(p => { const v = p[p.length-1]; if (v) body += `<div class="wvm-tit">${_wvHtml(v)}</div>`; });
+  g('TXT').forEach(p => { const v = p[p.length-1]; if (v) body += `<div class="wvm-txt">${_wvHtml(v)}</div>`; });
+  g('STR').forEach(p => { const v = p[p.length-1]; if (v) body += `<div class="wvm-str">${_wvHtml(v)}</div>`; });
   ['INP', 'INP2', 'INPH'].forEach(k => g(k).forEach(p => {
     let ph = '';
     [p[4], p[3], p[2]].forEach(c => { if (c && !/^\d+$/.test(c) && !ph) ph = c; });
@@ -217,31 +257,31 @@ function renderWebVoiceScreen(code, name, payload) {
   const q = g('BTNQ2');
   if (q.length) {
     body += '<div class="wvm-quick">' + q.map(p =>
-      `<div class="wvm-q">${_wvIcon(p[2], p[3], 1)}<span>${_wvText(p[3])}</span></div>`).join('') + '</div>';
+      `<div class="wvm-q">${_wvIcon(p[2], p[3], 1)}<span>${_wvHtml(p[3])}</span></div>`).join('') + '</div>';
   }
   // 메인 메뉴 그리드 (아이콘값 p[2], 라벨 p[3])
   const m = g('BTNM');
   if (m.length) {
     body += '<div class="wvm-menu">' + m.map(p =>
-      `<div class="wvm-m">${_wvIcon(p[2], p[3], 0)}<span>${_wvText(p[3])}</span></div>`).join('') + '</div>';
+      `<div class="wvm-m">${_wvIcon(p[2], p[3], 0)}<span>${_wvHtml(p[3])}</span></div>`).join('') + '</div>';
   }
   // 단독 BTN — BTN$idx$라벨$...
   const bsingle = g('BTN');
   if (bsingle.length) {
     body += '<div class="wvm-menu">' + bsingle.map(p =>
-      `<div class="wvm-m">${_wvIcon(null, p[2], 0)}<span>${_wvText(p[2])}</span></div>`).join('') + '</div>';
+      `<div class="wvm-m">${_wvIcon(null, p[2], 0)}<span>${_wvHtml(p[2])}</span></div>`).join('') + '</div>';
   }
   // 아코디언/리스트 버튼
-  g('BTNA').forEach(p => { if (p[2]) body += `<div class="wvm-list-btn">${_wvText(p[2])}</div>`; });
+  g('BTNA').forEach(p => { if (p[2]) body += `<div class="wvm-list-btn">${_wvHtml(p[2])}</div>`; });
   // 입력 확인/재전송
-  g('INPTXT').forEach(p => { if (p[2]) body += `<div class="wvm-btn o">${_wvText(p[2])}</div>`; });
-  g('BTNZ').forEach(p => { if (p[2]) body += `<div class="wvm-btn ghost">${_wvText(p[2])}</div>`; });
+  g('INPTXT').forEach(p => { if (p[2]) body += `<div class="wvm-btn o">${_wvHtml(p[2])}</div>`; });
+  g('BTNZ').forEach(p => { if (p[2]) body += `<div class="wvm-btn ghost">${_wvHtml(p[2])}</div>`; });
   // 2지선다/안내버튼
   ['BTN2', 'BTNE2', 'BTN0', 'BTN1', 'BTNE1'].forEach(k => {
     const b = g(k);
     if (b.length) {
       body += '<div class="wvm-btn2">' + b.map((p, i) =>
-        `<div class="wvm-btn ${i === b.length - 1 ? 'o' : 'ghost'}">${_wvText(p[2])}</div>`).join('') + '</div>';
+        `<div class="wvm-btn ${i === b.length - 1 ? 'o' : 'ghost'}">${_wvHtml(p[2])}</div>`).join('') + '</div>';
     }
   });
 

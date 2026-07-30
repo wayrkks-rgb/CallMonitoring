@@ -44,9 +44,11 @@ _BLOCK = re.compile(
 _DTMF = re.compile(r'\[GETDIGIT\]\s+Inputdigit\s*=\s*(?P<d>[\dA-D\*#]+)')
 # 페이로드 본문에 ')' 가 들어가는 경우(예: "보험료(월납)")가 있어 탐욕 매칭 후
 # 마지막 ')' 까지 잡는다. 비탐욕(.*?)이면 첫 괄호에서 잘려 메뉴가 누락됨.
-# 파라미터 없는 화면(S$HLIA01)도 잡도록 ';' 이후는 선택.
+# 파라미터 없는 화면(S$HLIA01)도 잡도록 구분자 이후는 선택.
+# 구분자는 ';' 과 ':' 이 섞여 쓰인다 (S$HLIB10;TIT$…</font>:TXT$0$L$…).
+# ';' 만 허용하면 ':' 로 이어지는 화면을 통째로 놓친다.
 _SCREEN_FULL = re.compile(
-    r'(?:szSendMenuData|SendData)\(\s*(?P<payload>S\$(?P<scr>HLI[A-Z0-9]+)(?:;.*)?)\)')
+    r'(?:szSendMenuData|SendData)\(\s*(?P<payload>S\$(?P<scr>HLI[A-Z0-9]+)(?:[;:].*)?)\)')
 _SCREEN = re.compile(r'WV_SENDMENU.*?S\$(?P<scr>HLI[A-Z0-9]+)')
 _SCN_ANY = re.compile(r'\[(?P<scn>[가-힣A-Za-z0-9_]+\.d?xml)\]')
 _TERM = re.compile(r'TERM REASON ==>\s*(?P<r>TM_\w+)')
@@ -56,13 +58,45 @@ _TERM = re.compile(r'TERM REASON ==>\s*(?P<r>TM_\w+)')
 #  남아 화면에 'S$HLI…' 가 그대로 노출되고, 다음 화면의 메뉴까지 섞여 들어온다)
 _SCR_DUP = re.compile(r':S\$HLI[A-Z0-9]+')
 
+# 세그먼트 구분자: ';' 또는 ':' 이지만, 바로 뒤에 'KEY$' 가 오는 경우만.
+# 텍스트 값에 CSS 가 들어와 ("font-size: 22px; color: #FF6600") 단순 split(';')
+# 은 값을 중간에서 끊는다. 실제로 화면에 ':TXT$0$L$' 가 노출되고 CSS 의 ';' 가
+# 사라지는 원인이었다.
+_SEG_SPLIT = re.compile(r'[;:](?=[A-Z][A-Z0-9_]{0,9}\$)')
 
-def _first_screen_payload(payload):
-    """payload 에서 첫 화면분만 반환 (다음 화면 경계 ':S$HLIxxx' 에서 절단)."""
+# 로그의 함수 호출 꼬리 — SendData 는 전송 라인과 결과 라인이 따로 찍히고,
+# 결과 라인에는 sResultCode(...)/sSelectDtmf(...)/sUserData(...) 가 붙는다.
+# 이걸 payload 로 같이 걷어오면 같은 화면이 매번 다른 payload 로 보여
+# 중복 제거가 안 된다(같은 화면이 5장씩 쌓이는 원인).
+_CALL_TAIL = re.compile(
+    r'''[;'"\s)]*\b(?:sResultCode|sSelectDtmf|nUserDataSize|sUserData|sRetData)\b\s*\(.*$''',
+    re.S)
+_EDGE_JUNK = re.compile(r'''^[\s'"(]+|[\s;'")]+$''')
+
+
+def _payload_segments(payload):
+    """payload → 세그먼트 리스트 (['S$HLIB10', 'TIT$0$S$...', ...])."""
+    return [s for s in _SEG_SPLIT.split(payload or '') if s]
+
+
+def _normalize_payload(payload):
+    """
+    표시/비교용 payload 정리.
+      1) 다음 화면 경계(':S$HLIxxx') 이후 절단
+      2) 함수 호출 결과 꼬리(sResultCode(...) 등) 제거
+      3) 양끝 따옴표/괄호/세미콜론 정리
+    """
     if not payload:
         return payload
     m = _SCR_DUP.search(payload)
-    return payload[:m.start()].rstrip(';') if m else payload
+    if m:
+        payload = payload[:m.start()]
+    payload = _CALL_TAIL.sub('', payload)
+    return _EDGE_JUNK.sub('', payload)
+
+
+# 이전 이름 유지 (호출부 호환)
+_first_screen_payload = _normalize_payload
 
 SENTINEL = "99999999"
 _RENDER_SCN = {"W_WebVoicePlay.dxml", "W_WebVoice_Main.dxml"}
@@ -110,26 +144,26 @@ def _parse_ars_lines(ars_lines):
             is_webvoice = True
             code = msc.group("scr")
             payload = mfull.group("payload") if mfull else ("S$" + code)
-            payload = _first_screen_payload(payload)
-            # 같은 화면코드라도 페이로드가 다르면 별개의 진행 단계다.
-            # (보이는ARS 는 HLIB00 '메뉴 리스트' 한 코드로 대→중→소분류를
-            #  연속 전송하므로, 코드만으로 합치면 흐름이 통째로 사라진다.)
+            payload = _normalize_payload(payload)
+            # ── '한 업무 = 한 화면' 판정 ────────────────────────
+            # 같은 화면이 전송/결과/재전송 라인으로 여러 번 찍히므로 합쳐야 하고,
+            # 반대로 같은 코드로 대→중→소분류를 연속 전송하는 경우(HLIB00)는
+            # 나눠야 한다. 기준: 연속 + 같은 코드 + 같은 '내용 키'.
+            #   내용 키 = 제목/본문/버튼 라벨의 순수 텍스트 (마크업·공백·결과필드 무시)
+            # 코드만 잡힌 부분 로그(stub)는 내용 키가 코드뿐이라 자동으로 합쳐진다.
             prev = screens[-1] if screens else None
-            stub = "S$" + code
-            same_screen = (
-                prev is not None and prev["code"] == code
-                and (payload == prev["payload"]
-                     or payload == stub          # 코드만 잡힌 부분 로그
-                     or prev["payload"] == stub)
-            )
+            ckey = _content_key(code, payload)
+            same_screen = (prev is not None and prev["code"] == code
+                           and prev["ckey"] == ckey)
             if same_screen:
                 if len(payload) > len(prev["payload"]):   # 더 상세한 쪽으로 보강
                     prev["payload"] = payload
                     if not prev.get("scn"):
                         prev["scn"] = cur_scn[0]
+                prev["repeat"] = prev.get("repeat", 1) + 1
             else:
                 screens.append({"ts": ts, "code": code, "payload": payload,
-                                "scn": cur_scn[0]})
+                                "ckey": ckey, "scn": cur_scn[0], "repeat": 1})
         md = _DTMF.search(s)
         if md and md.group("d").strip():
             dtmf.append({"ts": ts, "digit": md.group("d").strip()})
@@ -167,7 +201,45 @@ def _biz_name(scn):
     stem = re.sub(r'\.(dxml|xml)$', '', scn or '')
     return _BIZ_NAME.get(stem, stem.replace('W_', ''))
 
-_TIT = re.compile(r'(?:^|;)TIT\$[^$;]*\$[^$;]*\$(?P<t>[^;]+)')
+# 로그 텍스트에는 표시용 마크업(<font style='...'>, <br>)이 들어온다.
+# 요약 라벨에는 태그를 걷어내고 글자만 쓴다.
+_TAG = re.compile(r'<[^>]*>')
+_WS = re.compile(r'\s+')
+
+
+def _plain(text):
+    """마크업/구분자 제거한 순수 텍스트."""
+    t = _TAG.sub(' ', text or '').replace('|', ' ')
+    return _WS.sub(' ', t).strip()
+
+
+def _seg_value(segments, key, idx=-1):
+    """segments 에서 key 세그먼트의 마지막 필드 값. 없으면 ''."""
+    for seg in segments:
+        parts = seg.split('$')
+        if parts[0] == key and len(parts) > 1:
+            v = parts[idx] if idx != -1 else parts[-1]
+            if v:
+                return v
+    return ''
+
+
+# 내용 키에 반영할 세그먼트 (표시되는 것들만 — 시퀀스/결과 필드는 제외)
+_CKEY_KEYS = ("TIT", "TXT", "STR", "BTNM", "BTN", "BTNA", "BTN2", "BTNE2",
+              "BTNQ2", "BTNZ", "INP", "INP2", "INPH", "INPTXT")
+
+
+def _content_key(code, payload):
+    """
+    화면의 '내용' 지문. 같은 업무 단계의 재전송/결과 라인은 같은 값이 되고,
+    실제로 내용이 바뀐 화면(다음 분류 메뉴)은 다른 값이 된다.
+    """
+    parts = [code]
+    for seg in _payload_segments(payload):
+        f = seg.split('$')
+        if f[0] in _CKEY_KEYS:
+            parts.append(f[0] + '=' + _plain(f[-1]))
+    return '|'.join(parts)
 
 
 def _screen_label(s):
@@ -176,13 +248,13 @@ def _screen_label(s):
 
     화면코드 이름(_screen_name)은 템플릿명("메뉴 리스트")이라, 같은 코드로
     대→중→소분류를 연속 전송하는 보이는ARS 에선 모든 단계가 같은 이름이 되어
-    중복 제거에 전부 합쳐진다. 실제 화면 제목(TIT)이 있으면 그걸 우선 쓴다.
+    중복 제거에 전부 합쳐진다. 실제 화면 제목(TIT→TXT)이 있으면 그걸 쓴다.
     """
-    m = _TIT.search(s.get("payload") or "")
-    if m:
-        t = _first_screen_payload(m.group("t")).replace("|", " ").strip()
+    segs = _payload_segments(s.get("payload") or "")
+    for key in ("TIT", "TXT", "STR"):
+        t = _plain(_seg_value(segs, key))
         if t:
-            return t[:40]
+            return t[:40] + ('…' if len(t) > 40 else '')
     return _screen_name(s["code"])
 
 
