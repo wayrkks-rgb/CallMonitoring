@@ -181,6 +181,15 @@ class ArsIndexer:
         cur_path = ArsLogFetcher._expand(tmpl, cur_date, now.hour) if '{HH}' in tmpl \
             else ArsLogFetcher._expand(tmpl, cur_date)
 
+        # 라이브 대상 파일은 정의상 확정될 수 없다. 과거 버그/비정상 종료로
+        # 확정돼 있으면 여기서 풀어준다(확정 상태면 _scan_and_store 가 곧바로
+        # 빠져나가 오늘 로그가 영영 색인되지 않으므로 자가복구가 필요).
+        st = self.store.get_scan_state(cur_path)
+        if st and st.get('sealed'):
+            logger.warning("확정된 라이브 파일 해제: %s", cur_path)
+            self.store.set_scan_state(cur_path, st.get('last_offset') or 0,
+                                      st.get('pending_offset') or 0, sealed=0)
+
         # 현재 시각 파일: 절대 seal 안 함
         worked |= self._scan_and_store(server, label, cur_path, cur_date, seal=False)
 
@@ -193,6 +202,17 @@ class ArsIndexer:
                 seal = (now.minute >= 2)  # 정각+2분 지나면 확정
                 worked |= self._scan_and_store(server, label, prev_path,
                                                prev.strftime('%Y-%m-%d'), seal=seal)
+        else:
+            # 일별 파일: 어제자를 자정 직후까지 마저 흡수한다(시간별의 '직전 시각'과 동일).
+            # 이게 없으면 날짜가 바뀌는 순간 어제 파일은 라이브 테일 대상에서 빠지고
+            # 백필 큐에도 없어(기동 시점의 '오늘'이라 제외됨) 마지막 구간이 유실된다.
+            prev = now - timedelta(days=1)
+            pds = prev.strftime('%Y-%m-%d')
+            prev_path = ArsLogFetcher._expand(tmpl, pds)
+            st = self.store.get_scan_state(prev_path)
+            if not st or not st.get('sealed'):
+                seal = (now.hour > 0 or now.minute >= 5)  # 자정+5분 지나면 확정
+                worked |= self._scan_and_store(server, label, prev_path, pds, seal=seal)
         return worked
 
     def _scan_and_store(self, server, label, path, file_date, seal):
@@ -310,6 +330,12 @@ class ArsIndexer:
                                 continue
                             items.append((server, label, ArsLogFetcher._expand(tmpl, ds, hh), ds))
                     else:
+                        # 일별 파일: 오늘자는 하루 종일 append 되므로 백필 대상이 아니다.
+                        # 백필은 seal=1 로 확정하는데, 확정된 파일은 _scan_and_store 가
+                        # 곧바로 return False 하므로 라이브 테일이 오늘 파일을 더 이상
+                        # 읽지 않게 된다 → 기동 이후의 오늘 콜이 통째로 색인되지 않음.
+                        if d == 0:
+                            continue
                         items.append((server, label, ArsLogFetcher._expand(tmpl, ds), ds))
         # 최신순(리스트가 이미 최신→과거) 유지
         self._backfill = deque(items)
