@@ -48,6 +48,7 @@ DELTA_MAX_RATIO = 0.35
 
 DEFAULTS = {
     "ssh": "",
+    "ssh_port": 22,         # 원격 SSH 포트 (ssh 는 -p, scp 는 -P 로 전달)
     "base": r"C:\TEMP\시나리오",
     "new_dir": "운영",
     "old_dir": "과거",
@@ -82,6 +83,11 @@ def save_cfg(patch):
             cfg[k] = str(patch[k] if patch[k] is not None else "").strip()
     if cfg.get("verify") not in ("hash", "fast"):
         cfg["verify"] = "hash"
+    # 포트는 숫자로 저장 (빈 값/이상값은 22)
+    raw_port = str(cfg.get("ssh_port") or "").strip()
+    if raw_port and not raw_port.isdigit():
+        return False, cfg, "SSH 포트는 숫자로 입력하세요"
+    cfg["ssh_port"] = ssh_port({"ssh_port": raw_port or 22})
     if not cfg.get("base"):
         return False, cfg, "시나리오 기준 경로(base)를 입력하세요"
     if not cfg.get("new_dir") or not cfg.get("old_dir"):
@@ -121,13 +127,30 @@ def _q(s):
     return str(s).replace("'", "''")
 
 
-def _ps(alias, script, timeout=300):
+def ssh_port(cfg=None):
+    """설정된 SSH 포트 (기본 22). 범위를 벗어나면 22로."""
+    try:
+        p = int((cfg or load_cfg()).get("ssh_port") or 22)
+    except (TypeError, ValueError):
+        return 22
+    return p if 1 <= p <= 65535 else 22
+
+
+def _port_opt(port, scp=False):
+    """포트 옵션. ssh 는 -p, scp 는 -P 로 서로 다르다."""
+    if not port or int(port) == 22:
+        return []
+    return ['-P' if scp else '-p', str(int(port))]
+
+
+def _ps(alias, script, timeout=300, port=None):
     prefix = ("$ErrorActionPreference='SilentlyContinue';"
               "$ProgressPreference='SilentlyContinue';"
               "[Console]::OutputEncoding=[Text.Encoding]::UTF8;")
     enc = base64.b64encode((prefix + script).encode("utf-16-le")).decode("ascii")
-    cmd = ['ssh'] + SSH_OPTS + [alias, 'powershell', '-NoProfile',
-                                '-NonInteractive', '-EncodedCommand', enc]
+    cmd = (['ssh'] + SSH_OPTS + _port_opt(port if port is not None else ssh_port())
+           + [alias, 'powershell', '-NoProfile',
+              '-NonInteractive', '-EncodedCommand', enc])
     return subprocess.run(cmd, capture_output=True, text=True,
                           encoding='utf-8', errors='ignore', timeout=timeout)
 
@@ -195,7 +218,7 @@ def _fetch_tgz(alias, build_script, rtmp):
 
     fd, local = tempfile.mkstemp(suffix=".tgz")
     os.close(fd)
-    sp = subprocess.run(['scp'] + SSH_OPTS +
+    sp = subprocess.run(['scp'] + SSH_OPTS + _port_opt(ssh_port(), scp=True) +
                         [f'{alias}:{rtmp.replace(chr(92), "/")}', local],
                         capture_output=True, text=True, timeout=1800)
     if sp.returncode != 0:                       # scp 불가 → base64 폴백

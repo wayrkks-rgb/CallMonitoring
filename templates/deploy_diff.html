@@ -114,6 +114,9 @@ pre.diff .h{color:#8250df;display:block}
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px 14px;">
     <label>SSH 대상 <small style="color:#888">(예: ivradmin@10.19.20.11 또는 ssh config alias)</small>
       <input id="c_ssh" style="width:100%;padding:7px;border:1px solid #ccd2db;border-radius:6px;"></label>
+    <label>SSH 포트 <small style="color:#888">(기본 22)</small>
+      <input id="c_port" type="number" min="1" max="65535" placeholder="22"
+             style="width:100%;padding:7px;border:1px solid #ccd2db;border-radius:6px;"></label>
     <label>기준 경로 (base)
       <input id="c_base" style="width:100%;padding:7px;border:1px solid #ccd2db;border-radius:6px;"></label>
     <label>운영 폴더명
@@ -164,13 +167,14 @@ $('#go').onclick=()=>run(false);
 $('#re').onclick=()=>run(true);
 
 // ── 시나리오 경로 설정 ────────────────────────────────────
-const CFG_FIELDS={ssh:'c_ssh',base:'c_base',new_dir:'c_new',old_dir:'c_old',
-                  output_dir:'c_out',viewer_env:'c_venv',verify:'c_verify'};
+const CFG_FIELDS={ssh:'c_ssh',ssh_port:'c_port',base:'c_base',new_dir:'c_new',
+                  old_dir:'c_old',output_dir:'c_out',viewer_env:'c_venv',verify:'c_verify'};
 function cfgFill(j){
   const c=j.config||{};
   for(const [k,id] of Object.entries(CFG_FIELDS)) $('#'+id).value=c[k]||'';
   const r=j.remote||{};
-  $('#cfgPreview').textContent = r.new?('운영: '+r.new+'\n과거: '+r.old):'';
+  const tgt=(c.ssh||'')+(c.ssh_port&&+c.ssh_port!==22?(' (포트 '+c.ssh_port+')'):'');
+  $('#cfgPreview').textContent = r.new?('접속: '+tgt+'\n운영: '+r.new+'\n과거: '+r.old):'';
 }
 async function cfgLoad(){
   try{
