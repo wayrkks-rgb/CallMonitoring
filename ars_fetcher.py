@@ -649,11 +649,18 @@ class ArsLogFetcher:
         # 대상 서버 라벨(선택된 ARS 서버로 제한)
         targets = get_enabled_servers(server_type='ARS', purpose='inbound',
                                       server_ids=self.server_ids, access_method='unc')
-        labels = [get_server_label(s) for _, s in targets] if targets else None
+        if not targets:
+            # 선택 조건에 맞는 UNC ARS 서버가 없으면 결과도 없어야 한다.
+            # 예전엔 labels=None 을 넘겨 store.search 의 '서버 필터 없음'이 되는 바람에
+            # 선택하지 않은 서버(예: 개발/QA 만 골랐는데 운영)의 콜까지 돌려주고,
+            # 그 파일을 UNC 로 읽으려다 실패해 내용도 비어 나왔다.
+            return {'success': True, 'search_key': needle, 'call_count': 0,
+                    'calls': [], 'errors': self.errors or None}
+        labels = [get_server_label(s) for _, s in targets]
 
         rows = store.search(phone=phone, cust_id=cust_id,
                             start_date=self.start_date, end_date=self.end_date,
-                            servers=labels or None)
+                            servers=labels)
         if not rows:
             return {'success': True, 'search_key': needle, 'call_count': 0,
                     'calls': [], 'errors': self.errors or None}

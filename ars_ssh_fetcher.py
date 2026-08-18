@@ -335,7 +335,13 @@ class ArsSshLogFetcher(ArsLogFetcher):
 
         servers = self._ars_ssh_servers()
         label_map = {get_server_label(s): s for _, s in servers}
-        labels = list(label_map.keys()) or None
+        if not label_map:
+            # 선택 조건에 맞는 SSH ARS 서버가 없으면 결과도 없어야 한다.
+            # (UNC 쪽과 동일 — labels=None 은 '서버 필터 없음'이 되어 선택하지 않은
+            #  서버의 콜까지 돌려준다)
+            return {'success': True, 'search_key': needle, 'call_count': 0,
+                    'calls': [], 'errors': self.errors or None}
+        labels = list(label_map.keys())
 
         rows = store.search(phone=phone, cust_id=cust_id,
                             start_date=self.start_date, end_date=self.end_date,
