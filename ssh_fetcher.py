@@ -13,6 +13,8 @@ import logging
 from pathlib import Path
 from enum import Enum
 
+from config_manager import DATE_PLACEHOLDERS
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,6 +117,12 @@ class OpenSSHLogFetcher:
                 logger.error(f"SSH 오류 (코드 {result.returncode}): {error_msg}")
                 return None, self._classify_error(ssh_target, error_msg)
 
+            # 허용 코드지만 stderr 가 있으면(예: 잘못된 정규식) 로그로 남긴다.
+            # '없는 파일' 메시지는 grep -s 가 억제하므로 여기 걸리지 않는다.
+            if result.returncode != 0 and result.stderr.strip():
+                logger.warning("원격 명령 경고 (코드 %s) %s: %s", result.returncode,
+                               ssh_target, result.stderr.strip()[:300])
+
             lines = result.stdout.splitlines()
             return lines, None
 
@@ -201,9 +209,14 @@ class OpenSSHLogFetcher:
         ssh_cmd = self._build_ssh_cmd(server_config, ssh_target)
         ssh_cmd.append(remote_cmd)
 
-        logger.info(f"서버측 grep: {ssh_target} (패턴: {grep_pattern[:50]}...)")
-        # grep: 0=매칭, 1=매칭 없음(정상), 2+=실제 오류
-        lines, error = self._execute_ssh(ssh_cmd, timeout=60, ok_codes=(0, 1))
+        logger.info(f"서버측 grep: {ssh_target} (패턴: {grep_pattern[:50]}..., "
+                    f"파일 {len(file_patterns)}개)")
+        # grep 종료코드: 0=매칭, 1=매칭 없음, 2=없는 파일이 섞였거나 오류.
+        # 후보 파일은 존재 확인 없이 (경로 × 날짜) 조합으로 만들기 때문에 '없는
+        # 파일'이 섞이는 것이 정상이고, 그때도 존재하는 파일의 매칭 결과는
+        # stdout 으로 정상 출력된다. 2를 오류로 처리하면 경로/날짜가 늘어날수록
+        # 없는 파일이 낄 확률이 100%에 수렴해 결과가 통째로 버려진다.
+        lines, error = self._execute_ssh(ssh_cmd, timeout=60, ok_codes=(0, 1, 2))
 
         if error:
             return [], [error]
@@ -267,28 +280,37 @@ class OpenSSHLogFetcher:
           /hli_app/log/.../api.{YYYY-MM-DD}.log
           /var/log/app/{YYYYMMDD}/server.log
         """
-        patterns = []
+        patterns, seen = [], set()
 
         for log_path in log_paths:
-            # 플레이스홀더 유효성 검증
-            if '{YYYY-MM-DD}' not in log_path and '{YYYYMMDD}' not in log_path:
+            # 날짜 플레이스홀더 유효성 검증.
+            # config_manager.DATE_PLACEHOLDERS 가 허용하는 형식을 모두 인정해야 한다.
+            # 예전엔 {YYYY-MM-DD}/{YYYYMMDD} 만 봐서, {YYYY}-{MMDD} 같은 형식으로
+            # 등록된 경로가 조용히 스킵됐다 — 경로를 여러 개 등록했을 때 그중
+            # 일부만 검색되는 원인이었다.
+            if not any(tok in log_path for tok in DATE_PLACEHOLDERS):
                 logger.warning(
-                    f"플레이스홀더 없음 — 경로 스킵: {log_path} "
-                    f"(예: /path/to/api.{{YYYY-MM-DD}}.log 형태로 등록하세요)"
+                    f"날짜 플레이스홀더 없음 — 경로 스킵: {log_path} "
+                    f"(사용 가능: {', '.join(DATE_PLACEHOLDERS)})"
                 )
                 continue
 
+            expanded_list = []
             if dates:
-                # 각 날짜별로 플레이스홀더 치환
-                for date in dates:
-                    expanded = self._expand_placeholders(log_path, date)
-                    patterns.append(expanded)
+                expanded_list = [self._expand_placeholders(log_path, d) for d in dates]
             else:
-                # 날짜 미지정 시 플레이스홀더를 와일드카드로 치환
-                expanded = log_path
-                expanded = expanded.replace('{YYYY-MM-DD}', '*')
-                expanded = expanded.replace('{YYYYMMDD}', '*')
-                patterns.append(expanded)
+                # 날짜 미지정 → 날짜 자리를 와일드카드로
+                w = log_path
+                for tok in DATE_PLACEHOLDERS:
+                    w = w.replace(tok, '*')
+                expanded_list = [w]
+
+            for e in expanded_list:
+                # 시(HH)는 날짜로 특정되지 않으므로 항상 와일드카드
+                e = e.replace('{HH}', '*')
+                if e not in seen:
+                    seen.add(e)
+                    patterns.append(e)
 
         return patterns
 
@@ -303,15 +325,12 @@ class OpenSSHLogFetcher:
         Returns:
             치환된 경로
         """
+        y, m, d = date_str.split('-')
         result = path_pattern
-
-        # {YYYY-MM-DD} → 그대로 치환
         result = result.replace('{YYYY-MM-DD}', date_str)
-
-        # {YYYYMMDD} → 하이픈 제거해서 치환
-        compact_date = date_str.replace('-', '')
-        result = result.replace('{YYYYMMDD}', compact_date)
-
+        result = result.replace('{YYYYMMDD}', y + m + d)
+        result = result.replace('{YYYY}', y).replace('{MM}', m).replace('{DD}', d)
+        result = result.replace('{MMDD}', m + d)
         return result
 
     def _build_grep_command(self, grep_pattern, file_patterns, use_extended=False):
@@ -327,8 +346,10 @@ class OpenSSHLogFetcher:
         if not file_patterns:
             return None
         file_list = ' '.join(file_patterns)
-        flag = '-Eh' if use_extended else '-h'
-        return f"grep {flag} -- {shlex.quote(grep_pattern)} {file_list} 2>/dev/null"
+        # -s: 없는/못 읽는 파일 메시지 억제 (2>/dev/null 대신 — 잘못된 정규식 같은
+        #     진짜 오류는 stderr 로 남아 로그에 찍히게 한다)
+        flag = '-Ehs' if use_extended else '-hs'
+        return f"grep {flag} -- {shlex.quote(grep_pattern)} {file_list}"
 
     def test_connection(self, server_config):
         """SSH 연결 테스트"""
