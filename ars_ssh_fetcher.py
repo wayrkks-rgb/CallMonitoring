@@ -79,8 +79,17 @@ class ArsSshIO:
                '-o', 'StrictHostKeyChecking=accept-new',
                '-o', 'BatchMode=yes']
         key_path = server.get('ssh_key_path')
-        if key_path and Path(key_path).exists():
-            cmd += ['-i', str(key_path)]
+        if key_path:
+            if Path(key_path).exists():
+                # 설정에 키가 있으면 그 키만 쓰도록 고정 — 에이전트/기본 키가
+                # 먼저 시도돼 서버의 인증 시도 횟수를 소진하는 것을 막는다.
+                cmd += ['-i', str(key_path), '-o', 'IdentitiesOnly=yes']
+            else:
+                # 예전엔 조용히 -i 를 빼고 진행해 'Permission denied'(rc=255)만
+                # 남았다. 키 파일이 사라졌는지/서비스 계정에서 안 보이는지를
+                # 로그로 드러낸다.
+                logger.warning("SSH 키 파일 없음 — 키 인증 불가: %s "
+                               "(서비스 계정에서 접근 가능한 경로인지 확인)", key_path)
         port = server.get('ssh_port', 22)
         if port and int(port) != 22:
             cmd += ['-p', str(port)]
