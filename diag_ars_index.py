@@ -175,6 +175,27 @@ def main():
     stt = store.stats()
     for k, v in stt.items():
         print(f"  {k:18} = {v}")
+    # ★ 서버별 색인 현황 — '이 서버 콜이 DB 에 들어와 있는가'가 수집/조회 문제를 가른다
+    with store._lock:
+        per = store._conn.execute(
+            "SELECT server, COUNT(*) n, "
+            "       SUM(CASE WHEN start_time >= ? THEN 1 ELSE 0 END) today_n, "
+            "       MAX(start_time) last_call "
+            "FROM calls GROUP BY server ORDER BY server",
+            (f"{today} 00:00:00",)).fetchall()
+    print("\n  서버별 색인 현황:")
+    print(f"    {'서버':<20} {'전체':>8} {'오늘':>7}   마지막 콜")
+    indexed = set()
+    for r in per:
+        indexed.add(r["server"])
+        flag = "" if r["today_n"] else "   ★ 오늘 0건"
+        print(f"    {r['server']:<20} {r['n']:>8,} {r['today_n']:>7,}   {r['last_call']}{flag}")
+    # 색인 대상인데 DB 에 한 줄도 없는 서버 = 수집 단계에서 막힌 서버
+    missing = [get_server_label(s) for _, s in targets if get_server_label(s) not in indexed]
+    if missing:
+        print(f"\n    ★ 색인 대상이지만 DB 에 콜이 하나도 없는 서버: {', '.join(missing)}")
+        print("      → 조회가 아니라 '수집'에서 막힌 것입니다. 위 2번의 사유를 보세요.")
+
     with store._lock:
         rows = store._conn.execute(
             "SELECT server, start_time, ucid, phone, cust_id FROM calls "
@@ -240,7 +261,13 @@ def main():
   · 3번에 콜이 있는데 화면 X → 검색 조건(서버 선택/날짜) 또는 조회 경로 문제
 
   ※ 서버마다 되고 안 되는 경우, 1번에서 되는 서버와 안 되는 서버의
-    '접근' 방식과 '인바운드 경로' 줄을 나란히 비교해 보세요.""")
+    '접근' 방식과 '인바운드 경로' 줄을 나란히 비교해 보세요.
+
+  ── 수집 문제인가, 조회 문제인가 ──────────────────────────
+   3번 '서버별 색인 현황'에서 그 서버의 오늘 건수를 봅니다.
+     오늘 0건  → 수집(색인)에서 막힘. 2번의 '사유=' 를 보세요.
+     오늘 N건  → 수집은 정상. 화면에 안 나오면 조회 조건 문제이므로
+                 --phone/--cust-id 로 4번 검색 재현을 돌려 비교하세요.""")
 
 
 if __name__ == "__main__":
