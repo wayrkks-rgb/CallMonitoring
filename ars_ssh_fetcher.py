@@ -106,6 +106,11 @@ class ArsSshIO:
         target = self.ssh_target(server)
         if not target:
             return 1, b'', 'SSH 대상 없음(hostname/ip 확인)'
+        # 출력 인코딩을 UTF-8 로 고정하지 않으면 콘솔 기본 코드페이지(한국어 Windows
+        # = CP949)로 나와, 파이썬이 UTF-8 로 디코드할 때 한글이 깨지거나 사라진다.
+        # (base64 로 받는 read_range 는 무관하지만 grep 결과는 원문 텍스트다)
+        script = ("[Console]::OutputEncoding=New-Object Text.UTF8Encoding $false;"
+                  + script)
         remote = f'powershell -NoProfile -NonInteractive -EncodedCommand {self._encode_ps(script)}'
         cmd = self._ssh_base(server) + [target, remote]
         try:
@@ -189,39 +194,79 @@ class ArsSshIO:
         rc, out, err = self._run_ps(server, script)
         return rc == 0 and out.decode('ascii', 'ignore').strip() == '1'
 
-    def grep(self, server, paths, pattern, regex=True, encoding='utf8'):
+    # -EncodedCommand 는 Windows 명령행 길이 제한(약 32,767자)에 걸린다.
+    # base64(UTF-16LE)는 원문의 약 2.7배로 부풀므로 스크립트를 이 길이 이하로 유지한다.
+    # (경로 2개 × 7일 = 후보 336개면 인코딩 후 37KB 로 한도를 넘어 명령 자체가 실패했다)
+    MAX_SCRIPT = 8000
+
+    # 파일 인코딩 후보 — ARS 로그는 UTF-8 과 CP949(=default)가 섞여 있다.
+    # utf8 로만 읽으면 CP949 파일에서 한글 패턴이 전혀 매칭되지 않는다.
+    GREP_ENCODINGS = ('utf8', 'default')
+
+    def _grep_script(self, paths, pat, regex, encoding):
+        # 주의: f-string 안의 PowerShell 중괄호는 {{ }} 로 이스케이프해야 하지만,
+        #       PowerShell 에 전달될 때는 { } 하나로 나가야 한다.
+        arr = ','.join("'" + p.replace("'", "''") + "'" for p in paths)
+        simple = '' if regex else '-SimpleMatch '
+        return (
+            "$ErrorActionPreference='SilentlyContinue';"
+            f"$ps=@({arr}) | Where-Object {{ Test-Path -LiteralPath $_ }};"
+            "if($ps){"
+            f"Select-String -LiteralPath $ps -Encoding {encoding} {simple}-Pattern '{pat}'"
+            # 포매터를 거치면 콘솔 폭에서 줄이 접히거나 잘린다 → 직접 stdout 출력
+            " | ForEach-Object { [Console]::Out.WriteLine($_.Line) }"
+            "}"
+        )
+
+    def _grep_batches(self, paths, pat, regex, encoding):
+        """스크립트 길이 한도에 맞춰 경로를 나눈다."""
+        batches, cur = [], []
+        for p in paths:
+            cur.append(p)
+            if len(self._grep_script(cur, pat, regex, encoding)) > self.MAX_SCRIPT:
+                if len(cur) == 1:          # 경로 하나만으로 한도 초과 — 그대로 시도
+                    batches.append(cur)
+                    cur = []
+                else:
+                    batches.append(cur[:-1])
+                    cur = [p]
+        if cur:
+            batches.append(cur)
+        return batches
+
+    def grep(self, server, paths, pattern, regex=True, encoding=None):
         """서버측 Select-String 으로 매칭 라인만 회수.
 
         Args:
             paths: 로컬 경로 리스트 (존재하지 않는 경로는 무시됨)
             regex: True=.NET 정규식, False=리터럴(SimpleMatch)
-            encoding: 'utf8' | 'default'(CP949 등 시스템 기본) | 'unicode' ...
+            encoding: 파일 인코딩 지정. None 이면 utf8 → default(CP949) 순으로 시도
         Returns:
             (lines: list[str], error: str|None)
         """
         if not paths:
             return [], None
-        # 경로 배열 리터럴 구성 (작은따옴표 이스케이프)
-        arr = ','.join("'" + p.replace("'", "''") + "'" for p in paths)
         pat = pattern.replace("'", "''")
-        simple = '' if regex else '-SimpleMatch '
-        # 존재하는 경로만 필터 → Select-String (여러 파일 한 번에)
-        # 주의: 이 문자열은 f-string 이 아니므로 중괄호를 이스케이프하지 말 것
-        #       ('{{ }}' 로 쓰면 PowerShell 에 그대로 전달돼 스크립트블록 오류 → 출력 0줄)
-        script = (
-            "$ErrorActionPreference='SilentlyContinue';"
-            f"$ps=@({arr}) | Where-Object {{ Test-Path -LiteralPath $_ }};"
-            "if($ps){"
-            f"Select-String -LiteralPath $ps -Encoding {encoding} {simple}-Pattern '{pat}'"
-            " | ForEach-Object { $_.Line }"
-            "}"
-        )
-        rc, out, err = self._run_ps(server, script)
-        if rc != 0 and err:
-            return [], err[:200]
-        text = out.decode('utf-8', 'ignore')
-        lines = [l.rstrip('\r\n') for l in text.splitlines() if l.strip()]
-        return lines, None
+        encs = (encoding,) if encoding else self.GREP_ENCODINGS
+        last_err = None
+
+        for enc in encs:
+            lines = []
+            for batch in self._grep_batches(paths, pat, regex, enc):
+                rc, out, err = self._run_ps(server, self._grep_script(batch, pat, regex, enc))
+                if rc != 0:
+                    last_err = (err or '').strip()[:200] or f'PowerShell rc={rc}'
+                    logger.warning("ARS grep 실패 (%s, 경로 %d개): %s",
+                                   enc, len(batch), last_err)
+                    continue
+                text = out.decode('utf-8', 'ignore')
+                lines += [l.rstrip('\r\n') for l in text.splitlines() if l.strip()]
+            if lines:
+                if enc != encs[0]:
+                    logger.info("ARS grep: %s 인코딩으로 매칭 (%d줄)", enc, len(lines))
+                return lines, None
+
+        return [], last_err
 
 
 # ── SSH 기반 ARS 페처 (UNC 페처와 동일 인터페이스) ──────────
