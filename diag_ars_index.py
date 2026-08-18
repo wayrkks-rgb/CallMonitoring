@@ -49,21 +49,44 @@ def main():
     store = get_default_store()
 
     # ── 1) 대상 서버 / 경로 ────────────────────────────────
-    _hr("1. ARS 인바운드 대상 서버와 경로")
-    targets = get_enabled_servers(server_type="ARS", purpose="inbound")
-    if not targets:
-        print("★ 대상 서버가 없습니다.")
-        print("  확인: 서버 type=ARS · enabled=true · '인바운드' 로그 경로 등록 여부")
+    # 색인기는 get_enabled_servers(purpose='inbound') 로 대상을 고른다.
+    # 즉 '인바운드' 경로가 비어 있는 서버는 조용히 제외된다 — 서버마다
+    # 되고 안 되고가 갈리는 가장 흔한 원인이라 전체를 나열해 사유를 보여준다.
+    _hr("1. ARS 서버 전체와 색인 대상 여부")
+    all_ars = get_enabled_servers(server_type="ARS")
+    if not all_ars:
+        print("★ 활성화된 ARS 서버가 없습니다 (type=ARS · enabled=true 확인)")
         return
-    for idx, srv in targets:
+
+    targets = []
+    for idx, srv in all_ars:
         label = get_server_label(srv)
         am = (srv.get("access_method") or "unc")
-        paths = get_log_paths(srv, "inbound")
-        print(f"  [{idx}] {label}  접근={am}  인바운드 경로 {len(paths)}개")
-        for p in paths:
-            hh = "{HH}" in p
-            print(f"        {p}")
-            print(f"          → {'시간별 파일' if hh else '일별 파일'}")
+        inb = get_log_paths(srv, "inbound")
+        outb = get_log_paths(srv, "outbound")
+        mark = "색인 대상" if inb else "★ 색인 제외 ★"
+        print(f"\n  [{idx}] {label}   접근={am}   {mark}")
+        if am == "ssh":
+            from ars_ssh_fetcher import ArsSshIO
+            tgt = ArsSshIO.ssh_target(srv)
+            print(f"        SSH  {tgt}  포트={srv.get('ssh_port', 22)}  "
+                  f"키={srv.get('ssh_key_path') or '(없음)'}")
+        print(f"        인바운드 경로 {len(inb)}개 / 아웃바운드 {len(outb)}개")
+        for p in inb:
+            print(f"          IN  {p}   [{'시간별' if '{HH}' in p else '일별'}]")
+        if not inb:
+            print("        ↑ 인바운드 경로가 비어 있어 색인기가 이 서버를 건너뜁니다.")
+            if outb:
+                print("          아웃바운드에만 등록돼 있습니다:")
+                for p in outb:
+                    print(f"          OUT {p}")
+                print("          → 서버 관리 > 로그 경로에서 '인바운드'로도 등록하세요.")
+        else:
+            targets.append((idx, srv))
+
+    if not targets:
+        print("\n★ 인바운드 경로가 등록된 ARS 서버가 하나도 없습니다.")
+        return
 
     # ── 2) 오늘 파일 존재/크기 vs 인덱서가 읽은 위치 ────────
     _hr("2. 오늘 파일 상태 (존재/크기) vs 인덱서 진행 위치")
@@ -104,21 +127,29 @@ def main():
                     except Exception as e:
                         print(f"  {label} {tag}: ★ UNC 연결 예외 — {e}")
                         continue
-                    size = None
+                    size, why = None, None
                     try:
                         size = os.path.getsize(path)
                     except OSError as e:
-                        size = None
-                        err = e
+                        why = f"{type(e).__name__}: {e}"
                 else:
+                    # file_size 는 실패 사유를 삼키므로 원시 호출로 rc/stderr 를 본다
                     from ars_ssh_fetcher import ArsSshIO
-                    size = ArsSshIO().file_size(srv, path)
+                    io = ArsSshIO()
+                    rc, out, serr = io._run_ps(
+                        srv, f"$ErrorActionPreference='Stop';"
+                             f"(Get-Item -LiteralPath '{path}').Length")
+                    txt = out.decode("ascii", "ignore").strip()
+                    size = int(txt) if txt.isdigit() else None
+                    why = None if size is not None else \
+                        f"rc={rc} {(serr or txt or '응답 없음').strip()[:160]}"
 
                 st = store.get_scan_state(path)
                 name = os.path.basename(path)
                 if size is None:
-                    print(f"  {label} {tag}  {name}: ★ 파일 없음/읽기 불가")
+                    print(f"  {label} {tag}  {name}: ★ 읽기 실패")
                     print(f"        경로={path}")
+                    print(f"        사유={why}")
                     continue
                 any_today_file = True
                 if st is None:
@@ -201,11 +232,15 @@ def main():
             print("  해제할 파일 없음 (오늘자 파일 중 확정된 것이 없습니다)")
 
     _hr("판정 가이드")
-    print("""  · 2번에서 '파일 없음'      → 경로 템플릿 / UNC 권한 문제
+    print("""  · 1번 '★ 색인 제외'        → 인바운드 경로 미등록. 서버 관리에서 등록
+  · 2번 '읽기 실패' + 사유    → 경로 템플릿 / 권한 / SSH 접속 문제 (사유 참고)
   · 2번에서 'sealed' 표시    → 잘못 확정됨. --unseal 후 재기동
   · 2번 '뒤처짐'이 계속 커짐 → 인덱서 스레드 정지/오류 (logs/app.log 확인)
   · 2번 정상인데 3번이 0건   → 콜 경계 미검출 (call_start/WaitCall 패턴 불일치)
-  · 3번에 콜이 있는데 화면 X → 검색 조건(서버 선택/날짜) 또는 조회 경로 문제""")
+  · 3번에 콜이 있는데 화면 X → 검색 조건(서버 선택/날짜) 또는 조회 경로 문제
+
+  ※ 서버마다 되고 안 되는 경우, 1번에서 되는 서버와 안 되는 서버의
+    '접근' 방식과 '인바운드 경로' 줄을 나란히 비교해 보세요.""")
 
 
 if __name__ == "__main__":
