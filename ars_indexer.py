@@ -257,22 +257,35 @@ class ArsIndexer:
         offset = start_offset
 
         if self._is_ssh(server):
-            # SSH 모드: [start_offset, EOF) 를 read_range 로 한 번에 받아 라인 반복
+            # SSH 모드: [start_offset, EOF) 를 청크로 끊어 읽는다.
+            # 한 번에 받으면 대용량 시간대에서 SSH 타임아웃이 나고, 이후 매
+            # 폴링마다 같은 구간을 재시도하다 실패해 색인이 영구히 멈춘다.
             size = self._ssh_io.file_size(server, path)
             if size is None:
                 return None
-            if size <= start_offset:
-                data = b''
-            else:
-                data = self._ssh_io.read_range(server, path, start_offset, size - start_offset)
-                if data is None:
-                    return None
-            enc = _detect_encoding(data[:65536]) if data else 'utf-8'
-            for raw in data.splitlines(keepends=True):
+            enc = None
+            carry = b''          # 청크 경계에서 잘린 마지막 줄
+            src = os.path.basename(path)
+            for _pos, chunk in self._ssh_io.read_chunks(server, path, start_offset, size):
+                if enc is None:
+                    enc = _detect_encoding(chunk[:65536])
+                buf = carry + chunk
+                nl = buf.rfind(b'\n')
+                if nl < 0:                    # 아직 개행이 없음 → 다음 청크로 이월
+                    carry = buf
+                    continue
+                body, carry = buf[:nl + 1], buf[nl + 1:]
+                for raw in body.splitlines(keepends=True):
+                    ls = offset
+                    offset += len(raw)
+                    sm.feed(raw.decode(enc, errors='replace'), source=src,
+                            start_offset=ls, end_offset=offset)
+            # 남은 꼬리(개행 없는 마지막 줄): 확정 파일이면 소비하고,
+            # 아직 쓰이는 중이면 offset 을 전진시키지 않아 다음 회차에 다시 읽는다.
+            if carry and seal:
                 ls = offset
-                offset += len(raw)
-                line = raw.decode(enc, errors='replace')
-                sm.feed(line, source=os.path.basename(path),
+                offset += len(carry)
+                sm.feed(carry.decode(enc or 'utf-8', errors='replace'), source=src,
                         start_offset=ls, end_offset=offset)
         else:
             # UNC 모드: 로컬/네트워크 파일 순차 읽기

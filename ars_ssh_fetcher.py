@@ -49,8 +49,15 @@ class ArsSshIO:
     (runner(cmd_list) -> (returncode, stdout_bytes, stderr_text)).
     """
 
-    def __init__(self, connect_timeout=10, runner=None):
+    # 한 번의 SSH 왕복으로 읽어올 최대 바이트.
+    # 남은 구간을 통째로 요청하면 base64(≈4/3배) 문자열이 SSH stdout 으로
+    # 쏟아져 타임아웃이 나고, 그때부터 offset 이 영영 전진하지 못한다.
+    READ_CHUNK = 8 * 1024 * 1024
+
+    def __init__(self, connect_timeout=10, runner=None, timeout=120, read_timeout=300):
         self.connect_timeout = connect_timeout
+        self.timeout = timeout
+        self.read_timeout = read_timeout
         self._runner = runner or self._default_runner
 
     # SSH 타깃 문자열 (hostname 우선, 없으면 user@ip)
@@ -84,24 +91,27 @@ class ArsSshIO:
         """PowerShell 스크립트 → -EncodedCommand 용 UTF-16LE base64."""
         return base64.b64encode(script.encode('utf-16-le')).decode('ascii')
 
-    def _default_runner(self, cmd):
+    def _default_runner(self, cmd, timeout=None):
         try:
             p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               stdin=subprocess.DEVNULL, timeout=120)
+                               stdin=subprocess.DEVNULL, timeout=timeout or self.timeout)
             return p.returncode, p.stdout, (p.stderr or b'').decode('utf-8', 'ignore')
         except FileNotFoundError:
             return 127, b'', 'OpenSSH 미설치'
         except subprocess.TimeoutExpired:
-            return 124, b'', 'SSH 타임아웃'
+            return 124, b'', f'SSH 타임아웃({timeout or self.timeout}초)'
 
-    def _run_ps(self, server, script):
+    def _run_ps(self, server, script, timeout=None):
         """서버에서 PowerShell 스크립트 실행 → (rc, stdout_bytes, stderr)."""
         target = self.ssh_target(server)
         if not target:
             return 1, b'', 'SSH 대상 없음(hostname/ip 확인)'
         remote = f'powershell -NoProfile -NonInteractive -EncodedCommand {self._encode_ps(script)}'
         cmd = self._ssh_base(server) + [target, remote]
-        return self._runner(cmd)
+        try:
+            return self._runner(cmd, timeout)
+        except TypeError:
+            return self._runner(cmd)   # timeout 인자를 받지 않는 주입 runner 호환
 
     # ── 원시연산 ───────────────────────────────────────────
     def file_size(self, server, path):
@@ -133,14 +143,37 @@ class ArsSshIO:
             "[Convert]::ToBase64String($b,0,$n)"
             "}finally{$f.Close()}"
         )
-        rc, out, err = self._run_ps(server, script)
+        rc, out, err = self._run_ps(server, script, timeout=self.read_timeout)
         if rc != 0:
-            logger.debug(f"read_range 실패 {path}: {err[:150]}")
+            # 조용히 넘기면 offset 이 멈춘 채로 방치돼 원인 파악이 안 된다.
+            logger.warning("read_range 실패 %s [offset=%s len=%s]: %s",
+                           path, offset, length, (err or '').strip()[:200])
             return None
         try:
             return base64.b64decode(out.decode('ascii', 'ignore').strip() or '')
-        except Exception:
+        except Exception as e:
+            logger.warning("read_range 디코드 실패 %s: %s", path, e)
             return None
+
+    def read_chunks(self, server, path, offset, end):
+        """
+        [offset, end) 를 READ_CHUNK 단위로 나눠 순차 반환 (제너레이터).
+
+        남은 구간을 한 번에 요청하면 대용량 시간대에서 타임아웃이 나고,
+        그 뒤로는 매 폴링마다 같은(더 커진) 구간을 재시도하다 실패해
+        해당 파일의 색인이 영구히 멈춘다. 청크로 끊어 진행분을 확정한다.
+        """
+        pos = int(offset or 0)
+        end = int(end or 0)
+        while pos < end:
+            want = min(self.READ_CHUNK, end - pos)
+            data = self.read_range(server, path, pos, want)
+            if not data:
+                return          # 실패/EOF → 여기까지만 반영 (다음 폴링에서 이어감)
+            yield pos, data
+            pos += len(data)
+            if len(data) < want:
+                return          # 짧게 읽힘 → 이번 회차는 여기까지
 
     def read_all(self, server, path):
         """파일 전체 bytes (없으면 None). 대용량엔 grep 을 우선 사용할 것."""
