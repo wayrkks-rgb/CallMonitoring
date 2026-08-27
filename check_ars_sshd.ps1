@@ -1,130 +1,232 @@
 <#
-  check_ars_sshd.ps1 — ARS(Windows) 서버에서 실행하는 sshd 인증 점검
+  check_ars_sshd.ps1 - ARS(Windows) sshd public-key auth checker
 
-  '인증 거부(Permission denied)' 인데 이벤트 로그에 아무것도 안 남을 때,
-  sshd 가 '실제로 어느 파일을 보는지' 와 '그 파일 권한이 맞는지' 를 확인한다.
+  Run this ON THE ARS WINDOWS SERVER when the app gets
+  "Permission denied" (rc=255) but the event log shows nothing.
 
-  실행 (ARS 서버에서 관리자 PowerShell):
+  It reports WHICH authorized_keys file sshd actually reads,
+  what keys are in it, and whether the ACL is acceptable to sshd.
+
+  NOTE: this file is intentionally ASCII-only so that Windows
+  PowerShell 5.1 parses it regardless of file encoding/BOM.
+
+  Usage (admin PowerShell on the ARS server):
       powershell -ExecutionPolicy Bypass -File check_ars_sshd.ps1 -User ivradmin
       powershell -ExecutionPolicy Bypass -File check_ars_sshd.ps1 -User ivradmin -EnableLog
-
-  -EnableLog 를 주면 sshd 파일 로깅(DEBUG3)을 켜고 sshd 를 재시작한다.
-  (이벤트 로그가 안 쌓일 때 원인을 보는 가장 확실한 방법)
 #>
 param(
-  [Parameter(Mandatory=$true)][string]$User,
-  [switch]$EnableLog
+    [Parameter(Mandatory = $true)][string]$User,
+    [switch]$EnableLog
 )
 
-function Head($t) { Write-Host ""; Write-Host ("=" * 68); Write-Host " $t"; Write-Host ("=" * 68) }
+$ErrorActionPreference = 'Continue'
 
-Head "1. sshd 서비스 / 버전"
+function Head([string]$t) {
+    Write-Host ""
+    Write-Host ("=" * 68)
+    Write-Host (" " + $t)
+    Write-Host ("=" * 68)
+}
+
+# ---------------------------------------------------------------- 1
+Head "1. sshd service and version"
 $svc = Get-Service sshd -ErrorAction SilentlyContinue
-if (-not $svc) { Write-Host "  X sshd 서비스가 없습니다 (OpenSSH Server 미설치)"; exit 1 }
-Write-Host "  상태 : $($svc.Status)  시작유형 : $($svc.StartType)"
-& ssh -V 2>&1 | ForEach-Object { Write-Host "  클라이언트 : $_" }
-$sshdExe = "$env:ProgramFiles\OpenSSH\sshd.exe"
-if (Test-Path $sshdExe) { & $sshdExe -? 2>&1 | Select-Object -First 1 | ForEach-Object { Write-Host "  sshd : $_" } }
-Write-Host "  수신 포트 :"
-Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-  Where-Object { $_.OwningProcess -eq (Get-Process sshd -ErrorAction SilentlyContinue | Select-Object -First 1).Id } |
-  ForEach-Object { Write-Host "    $($_.LocalAddress):$($_.LocalPort)" }
+if (-not $svc) {
+    Write-Host "  [X] sshd service not found (OpenSSH Server not installed)"
+    exit 1
+}
+Write-Host ("  status      : " + $svc.Status)
+Write-Host ("  start type  : " + $svc.StartType)
 
-Head "2. 대상 계정과 그룹"
+$sshdExe = Join-Path $env:ProgramFiles "OpenSSH\sshd.exe"
+if (Test-Path $sshdExe) {
+    $ver = (Get-Item $sshdExe).VersionInfo.FileVersion
+    Write-Host ("  sshd.exe    : " + $sshdExe + "  (" + $ver + ")")
+}
+else {
+    Write-Host "  sshd.exe    : not found under Program Files\OpenSSH"
+}
+
+$proc = Get-Process sshd -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($proc -and (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue)) {
+    $listen = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+              Where-Object { $_.OwningProcess -eq $proc.Id }
+    foreach ($l in $listen) {
+        Write-Host ("  listening   : " + $l.LocalAddress + ":" + $l.LocalPort)
+    }
+    if (-not $listen) { Write-Host "  listening   : (could not resolve)" }
+}
+else {
+    # older Windows without Get-NetTCPConnection
+    $ns = & netstat -ano 2>$null | Select-String "LISTENING"
+    foreach ($line in $ns) {
+        if ($proc -and ($line -match ("\s" + $proc.Id + "\s*$"))) {
+            Write-Host ("  listening   : " + $line.ToString().Trim())
+        }
+    }
+}
+
+# ---------------------------------------------------------------- 2
+Head "2. Target account and group membership"
 $isAdmin = $false
 try {
-  $members = (Get-LocalGroupMember -Group "Administrators" -ErrorAction Stop |
-              ForEach-Object { $_.Name.Split('\')[-1] })
-  $isAdmin = $members -contains $User
-  Write-Host "  Administrators 구성원 : $($members -join ', ')"
-} catch { Write-Host "  (그룹 조회 실패: $_)" }
-Write-Host "  '$User' 가 관리자인가 : $isAdmin"
+    $members = @()
+    foreach ($m in (Get-LocalGroupMember -Group "Administrators" -ErrorAction Stop)) {
+        $members += ($m.Name -split '\\')[-1]
+    }
+    Write-Host ("  Administrators: " + ($members -join ", "))
+    if ($members -contains $User) { $isAdmin = $true }
+}
+catch {
+    # Get-LocalGroupMember needs PS 5.1+ / newer Windows. Fall back to net.exe,
+    # which exists everywhere. This check matters most, so do not skip it.
+    Write-Host ("  (Get-LocalGroupMember failed: " + $_.Exception.Message + ")")
+    Write-Host "  falling back to 'net localgroup Administrators'"
+    $out = & net localgroup Administrators 2>$null
+    foreach ($line in $out) {
+        $t = ("" + $line).Trim()
+        if (-not $t) { continue }
+        if ($t -match '^(The command|Alias name|Comment|Members|-----)') { continue }
+        $name = ($t -split '\\')[-1]
+        if ($name -eq $User) { $isAdmin = $true }
+    }
+}
+Write-Host ("  '" + $User + "' is admin : " + $isAdmin)
 if ($isAdmin) {
-  Write-Host "  ★ 관리자 계정이면 sshd 는 ~\.ssh\authorized_keys 를 '무시'하고"
-  Write-Host "    C:\ProgramData\ssh\administrators_authorized_keys 만 봅니다."
+    Write-Host "  [!] Admin accounts: sshd IGNORES ~\.ssh\authorized_keys and"
+    Write-Host "      uses C:\ProgramData\ssh\administrators_authorized_keys only."
 }
 
-Head "3. sshd_config 의 인증 설정"
-$cfg = "$env:ProgramData\ssh\sshd_config"
+# ---------------------------------------------------------------- 3
+Head "3. sshd_config auth settings"
+$cfg = Join-Path $env:ProgramData "ssh\sshd_config"
 if (Test-Path $cfg) {
-  Get-Content $cfg | Where-Object {
-    $_ -match '^\s*(PubkeyAuthentication|AuthorizedKeysFile|Match|PasswordAuthentication|LogLevel|SyslogFacility)'
-  } | ForEach-Object { Write-Host "    $_" }
-} else { Write-Host "  X sshd_config 없음: $cfg" }
+    Write-Host ("  file: " + $cfg)
+    $pat = '^\s*#?\s*(PubkeyAuthentication|AuthorizedKeysFile|Match|PasswordAuthentication|LogLevel|SyslogFacility|Port)\b'
+    foreach ($line in (Get-Content $cfg)) {
+        if ($line -match $pat) { Write-Host ("    " + $line) }
+    }
+}
+else {
+    Write-Host ("  [X] sshd_config not found: " + $cfg)
+}
 
-Head "4. sshd 가 참조하는 authorized_keys"
-$adminKeys = "$env:ProgramData\ssh\administrators_authorized_keys"
-$userKeys  = "C:\Users\$User\.ssh\authorized_keys"
-$target = if ($isAdmin) { $adminKeys } else { $userKeys }
-Write-Host "  적용 대상 : $target"
+# ---------------------------------------------------------------- 4
+Head "4. authorized_keys file that applies"
+$adminKeys = Join-Path $env:ProgramData "ssh\administrators_authorized_keys"
+$userKeys = Join-Path "C:\Users" (Join-Path $User ".ssh\authorized_keys")
+if ($isAdmin) { $target = $adminKeys } else { $target = $userKeys }
+Write-Host ("  applies -> " + $target)
+Write-Host ""
 
 foreach ($f in @($adminKeys, $userKeys)) {
-  $mark = if ($f -eq $target) { " <= sshd 가 보는 파일" } else { "" }
-  if (Test-Path $f) {
-    $n = (Get-Content $f | Where-Object { $_.Trim() -and -not $_.StartsWith('#') }).Count
-    Write-Host "  [있음] $f  ($n 개 키)$mark"
-  } else {
-    Write-Host "  [없음] $f$mark"
-  }
-}
-
-if (Test-Path $target) {
-  Head "5. 등록된 키 지문 (웹앱 진단의 '지문' 과 대조)"
-  $tmp = [IO.Path]::GetTempFileName()
-  Get-Content $target | Where-Object { $_.Trim() -and -not $_.StartsWith('#') } | ForEach-Object {
-    Set-Content -Path $tmp -Value $_ -Encoding ascii
-    $fp = & ssh-keygen -lf $tmp 2>$null
-    if ($fp) { Write-Host "    $fp" } else { Write-Host "    (지문 계산 실패) $($_.Substring(0,[Math]::Min(60,$_.Length)))..." }
-  }
-  Remove-Item $tmp -ErrorAction SilentlyContinue
-
-  Head "6. 파일 권한 (ACL) — 여기가 틀리면 sshd 가 조용히 거부"
-  $acl = Get-Acl $target
-  Write-Host "  소유자 : $($acl.Owner)"
-  Write-Host "  상속    : $(-not $acl.AreAccessRulesProtected)  (True 면 ★ 문제)"
-  $bad = @()
-  foreach ($r in $acl.Access) {
-    $id = $r.IdentityReference.Value
-    Write-Host "    $id : $($r.FileSystemRights)"
-    if ($id -notmatch 'BUILTIN\\Administrators|NT AUTHORITY\\SYSTEM') { $bad += $id }
-  }
-  if ($isAdmin) {
-    if ($bad.Count -or -not $acl.AreAccessRulesProtected) {
-      Write-Host ""
-      Write-Host "  ★ administrators_authorized_keys 는 Administrators 와 SYSTEM 만"
-      Write-Host "    권한을 가져야 하고 상속이 꺼져 있어야 합니다."
-      Write-Host "    허용 외 주체: $($bad -join ', ')"
-      Write-Host "    복구:"
-      Write-Host "      icacls `"$target`" /inheritance:r /grant `"Administrators:F`" /grant `"SYSTEM:F`""
-    } else {
-      Write-Host "  → ACL 정상"
+    if ($f -eq $target) { $mark = "   <== sshd reads this" } else { $mark = "" }
+    if (Test-Path $f) {
+        $keys = @()
+        foreach ($line in (Get-Content $f)) {
+            $t = $line.Trim()
+            if ($t -and -not $t.StartsWith("#")) { $keys += $t }
+        }
+        Write-Host ("  [EXISTS] " + $f + "  (" + $keys.Count + " keys)" + $mark)
     }
-  }
+    else {
+        Write-Host ("  [MISSING] " + $f + $mark)
+    }
 }
 
+# ---------------------------------------------------------------- 5
+if (Test-Path $target) {
+    Head "5. Fingerprints of registered keys"
+    Write-Host "  Compare with the fingerprint printed by diag_ars_auth.py"
+    Write-Host ""
+    $tmp = [System.IO.Path]::GetTempFileName()
+    foreach ($line in (Get-Content $target)) {
+        $t = $line.Trim()
+        if (-not $t -or $t.StartsWith("#")) { continue }
+        Set-Content -Path $tmp -Value $t -Encoding ascii
+        $fp = & ssh-keygen -lf $tmp 2>$null
+        if ($fp) {
+            Write-Host ("    " + $fp)
+        }
+        else {
+            $head = $t
+            if ($head.Length -gt 60) { $head = $head.Substring(0, 60) }
+            Write-Host ("    (fingerprint failed) " + $head + "...")
+        }
+    }
+    Remove-Item $tmp -ErrorAction SilentlyContinue
+
+    # ------------------------------------------------------------ 6
+    Head "6. ACL of that file  (wrong ACL = silent reject)"
+    $acl = Get-Acl $target
+    Write-Host ("  owner       : " + $acl.Owner)
+    $inherited = -not $acl.AreAccessRulesProtected
+    Write-Host ("  inheritance : " + $inherited + "   (True = PROBLEM)")
+    $bad = @()
+    foreach ($r in $acl.Access) {
+        $id = $r.IdentityReference.Value
+        Write-Host ("    " + $id + " : " + $r.FileSystemRights)
+        if ($id -notmatch 'BUILTIN\\Administrators') {
+            if ($id -notmatch 'NT AUTHORITY\\SYSTEM') { $bad += $id }
+        }
+    }
+    if ($isAdmin) {
+        Write-Host ""
+        if ($bad.Count -gt 0 -or $inherited) {
+            Write-Host "  [!] administrators_authorized_keys must grant ONLY"
+            Write-Host "      Administrators and SYSTEM, with inheritance disabled."
+            if ($bad.Count -gt 0) { Write-Host ("      unexpected: " + ($bad -join ", ")) }
+            Write-Host ""
+            Write-Host "      FIX:"
+            Write-Host ('      icacls "' + $target + '" /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"')
+        }
+        else {
+            Write-Host "  -> ACL looks correct"
+        }
+    }
+}
+
+# ---------------------------------------------------------------- 7
 if ($EnableLog) {
-  Head "7. sshd 파일 로깅 활성화"
-  $bk = "$cfg.bak_$(Get-Date -Format yyyyMMdd_HHmmss)"
-  Copy-Item $cfg $bk
-  Write-Host "  백업 : $bk"
-  $c = Get-Content $cfg
-  $c = $c | Where-Object { $_ -notmatch '^\s*#?\s*(SyslogFacility|LogLevel)\s' }
-  $c += "SyslogFacility LOCAL0"
-  $c += "LogLevel DEBUG3"
-  Set-Content -Path $cfg -Value $c -Encoding ascii
-  Restart-Service sshd
-  Write-Host "  sshd 재시작 완료. 이제 웹앱에서 다시 접속을 시도한 뒤:"
-  Write-Host "    Get-Content `"$env:ProgramData\ssh\logs\sshd.log`" -Tail 80"
-  Write-Host "  거부 사유가 여기에 그대로 남습니다."
-  Write-Host "  확인 후 원복 : Copy-Item `"$bk`" `"$cfg`" -Force; Restart-Service sshd"
+    Head "7. Enable sshd file logging (DEBUG3)"
+    if (-not (Test-Path $cfg)) {
+        Write-Host "  [X] sshd_config not found, skipped"
+    }
+    else {
+        $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+        $bk = $cfg + ".bak_" + $stamp
+        Copy-Item $cfg $bk
+        Write-Host ("  backup: " + $bk)
+
+        $keep = @()
+        foreach ($line in (Get-Content $cfg)) {
+            if ($line -notmatch '^\s*#?\s*(SyslogFacility|LogLevel)\b') { $keep += $line }
+        }
+        $keep += "SyslogFacility LOCAL0"
+        $keep += "LogLevel DEBUG3"
+        Set-Content -Path $cfg -Value $keep -Encoding ascii
+        Restart-Service sshd
+        $logPath = Join-Path $env:ProgramData "ssh\logs\sshd.log"
+        Write-Host "  sshd restarted."
+        Write-Host "  Now retry the connection from the web app, then run:"
+        Write-Host ('    Get-Content "' + $logPath + '" -Tail 80')
+        Write-Host ""
+        Write-Host "  To revert:"
+        Write-Host ('    Copy-Item "' + $bk + '" "' + $cfg + '" -Force; Restart-Service sshd')
+    }
 }
 
-Head "판정 요약"
-Write-Host @"
-  · 4번에서 'sshd 가 보는 파일' 이 [없음] 이면        → 키가 등록돼 있지 않음
-  · 5번 지문에 웹앱 진단의 지문이 없으면              → 다른 키가 등록돼 있음
-  · 6번에서 상속 True 이거나 허용 외 주체가 있으면    → ACL 문제 (복구 명령 참고)
-  · 2번에서 관리자 여부가 예상과 다르면               → 참조 파일이 바뀐 것
-    (관리자 그룹에 들어가면 ~\.ssh\authorized_keys 는 무시됩니다)
-  · 위가 다 정상인데도 거부되면 -EnableLog 로 sshd 로그를 켜세요
-"@
+# ---------------------------------------------------------------- summary
+Head "Summary - how to read this"
+Write-Host "  Section 4 shows the file sshd actually reads."
+Write-Host ""
+Write-Host "  [MISSING] on that file      -> key was never registered there"
+Write-Host "  fingerprint not in sec 5    -> a DIFFERENT key is registered"
+Write-Host "  inheritance True / extra ID -> ACL problem, use the FIX command"
+Write-Host "  admin flag differs from"
+Write-Host "  what you expect             -> the file sshd reads has CHANGED"
+Write-Host "                                 (adding the account to Administrators"
+Write-Host "                                  makes ~\.ssh\authorized_keys ignored)"
+Write-Host ""
+Write-Host "  All of the above look fine? Re-run with -EnableLog and read sshd.log."
+Write-Host ""
