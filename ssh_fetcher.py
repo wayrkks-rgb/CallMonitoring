@@ -7,10 +7,13 @@ SSH 원격 로그 수집 모듈
 - 서버측 grep으로 전송량 최소화
 """
 
+import shlex
 import subprocess
 import logging
 from pathlib import Path
 from enum import Enum
+
+from config_manager import DATE_PLACEHOLDERS
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +90,17 @@ class OpenSSHLogFetcher:
         ssh_cmd.append(ssh_target)
         return ssh_cmd
 
-    def _execute_ssh(self, ssh_cmd, timeout=30):
-        """SSH 명령 실행 및 결과 반환"""
+    def _execute_ssh(self, ssh_cmd, timeout=30, ok_codes=(0,)):
+        """
+        SSH 명령 실행 및 결과 반환.
+
+        Args:
+            ok_codes: 정상으로 볼 원격 종료코드들.
+                grep/cat 은 '매칭 없음 / 파일 없음' 에도 1 을 반환하므로
+                검색 계열은 (0, 1) 을 넘겨 정상 무결과와 실제 장애를 구분한다.
+                (구분하지 않으면 로그가 없는 서버마다 가짜 오류가 쌓여
+                 진짜 SSH 장애를 가린다.)
+        """
         ssh_target = ssh_cmd[-2] if len(ssh_cmd) > 2 else 'unknown'
 
         try:
@@ -100,10 +112,16 @@ class OpenSSHLogFetcher:
                 encoding='utf-8', errors='ignore'
             )
 
-            if result.returncode != 0:
+            if result.returncode not in ok_codes:
                 error_msg = result.stderr.strip()
                 logger.error(f"SSH 오류 (코드 {result.returncode}): {error_msg}")
                 return None, self._classify_error(ssh_target, error_msg)
+
+            # 허용 코드지만 stderr 가 있으면(예: 잘못된 정규식) 로그로 남긴다.
+            # '없는 파일' 메시지는 grep -s 가 억제하므로 여기 걸리지 않는다.
+            if result.returncode != 0 and result.stderr.strip():
+                logger.warning("원격 명령 경고 (코드 %s) %s: %s", result.returncode,
+                               ssh_target, result.stderr.strip()[:300])
 
             lines = result.stdout.splitlines()
             return lines, None
@@ -191,8 +209,14 @@ class OpenSSHLogFetcher:
         ssh_cmd = self._build_ssh_cmd(server_config, ssh_target)
         ssh_cmd.append(remote_cmd)
 
-        logger.info(f"서버측 grep: {ssh_target} (패턴: {grep_pattern[:50]}...)")
-        lines, error = self._execute_ssh(ssh_cmd, timeout=60)
+        logger.info(f"서버측 grep: {ssh_target} (패턴: {grep_pattern[:50]}..., "
+                    f"파일 {len(file_patterns)}개)")
+        # grep 종료코드: 0=매칭, 1=매칭 없음, 2=없는 파일이 섞였거나 오류.
+        # 후보 파일은 존재 확인 없이 (경로 × 날짜) 조합으로 만들기 때문에 '없는
+        # 파일'이 섞이는 것이 정상이고, 그때도 존재하는 파일의 매칭 결과는
+        # stdout 으로 정상 출력된다. 2를 오류로 처리하면 경로/날짜가 늘어날수록
+        # 없는 파일이 낄 확률이 100%에 수렴해 결과가 통째로 버려진다.
+        lines, error = self._execute_ssh(ssh_cmd, timeout=60, ok_codes=(0, 1, 2))
 
         if error:
             return [], [error]
@@ -232,7 +256,8 @@ class OpenSSHLogFetcher:
         ssh_cmd.append(remote_cmd)
 
         logger.info(f"로그 수집: {ssh_target}")
-        lines, error = self._execute_ssh(ssh_cmd, timeout=60)
+        # cat: 대상 파일이 하나도 없으면 1 (해당 날짜 로그 미존재 = 정상)
+        lines, error = self._execute_ssh(ssh_cmd, timeout=60, ok_codes=(0, 1))
 
         if error:
             return [], [error]
@@ -255,28 +280,37 @@ class OpenSSHLogFetcher:
           /hli_app/log/.../api.{YYYY-MM-DD}.log
           /var/log/app/{YYYYMMDD}/server.log
         """
-        patterns = []
+        patterns, seen = [], set()
 
         for log_path in log_paths:
-            # 플레이스홀더 유효성 검증
-            if '{YYYY-MM-DD}' not in log_path and '{YYYYMMDD}' not in log_path:
+            # 날짜 플레이스홀더 유효성 검증.
+            # config_manager.DATE_PLACEHOLDERS 가 허용하는 형식을 모두 인정해야 한다.
+            # 예전엔 {YYYY-MM-DD}/{YYYYMMDD} 만 봐서, {YYYY}-{MMDD} 같은 형식으로
+            # 등록된 경로가 조용히 스킵됐다 — 경로를 여러 개 등록했을 때 그중
+            # 일부만 검색되는 원인이었다.
+            if not any(tok in log_path for tok in DATE_PLACEHOLDERS):
                 logger.warning(
-                    f"플레이스홀더 없음 — 경로 스킵: {log_path} "
-                    f"(예: /path/to/api.{{YYYY-MM-DD}}.log 형태로 등록하세요)"
+                    f"날짜 플레이스홀더 없음 — 경로 스킵: {log_path} "
+                    f"(사용 가능: {', '.join(DATE_PLACEHOLDERS)})"
                 )
                 continue
 
+            expanded_list = []
             if dates:
-                # 각 날짜별로 플레이스홀더 치환
-                for date in dates:
-                    expanded = self._expand_placeholders(log_path, date)
-                    patterns.append(expanded)
+                expanded_list = [self._expand_placeholders(log_path, d) for d in dates]
             else:
-                # 날짜 미지정 시 플레이스홀더를 와일드카드로 치환
-                expanded = log_path
-                expanded = expanded.replace('{YYYY-MM-DD}', '*')
-                expanded = expanded.replace('{YYYYMMDD}', '*')
-                patterns.append(expanded)
+                # 날짜 미지정 → 날짜 자리를 와일드카드로
+                w = log_path
+                for tok in DATE_PLACEHOLDERS:
+                    w = w.replace(tok, '*')
+                expanded_list = [w]
+
+            for e in expanded_list:
+                # 시(HH)는 날짜로 특정되지 않으므로 항상 와일드카드
+                e = e.replace('{HH}', '*')
+                if e not in seen:
+                    seen.add(e)
+                    patterns.append(e)
 
         return patterns
 
@@ -291,27 +325,31 @@ class OpenSSHLogFetcher:
         Returns:
             치환된 경로
         """
+        y, m, d = date_str.split('-')
         result = path_pattern
-
-        # {YYYY-MM-DD} → 그대로 치환
         result = result.replace('{YYYY-MM-DD}', date_str)
-
-        # {YYYYMMDD} → 하이픈 제거해서 치환
-        compact_date = date_str.replace('-', '')
-        result = result.replace('{YYYYMMDD}', compact_date)
-
+        result = result.replace('{YYYYMMDD}', y + m + d)
+        result = result.replace('{YYYY}', y).replace('{MM}', m).replace('{DD}', d)
+        result = result.replace('{MMDD}', m + d)
         return result
 
     def _build_grep_command(self, grep_pattern, file_patterns, use_extended=False):
         """
         grep 명령 생성.
         use_extended=True이면 grep -E (확장 정규식, | 지원)
+
+        패턴은 사용자 입력(검색어/custId)과 로그에서 뽑은 값(sessionKey)에서 오므로
+        반드시 shlex.quote 로 감싼다. 직접 따옴표로 감싸면 패턴에 작은따옴표가
+        들어올 때 셸 인용이 깨져 검색이 실패하고, 원격 명령이 주입될 수 있다.
+        (경로는 {YYYY-MM-DD} 미지정 시 '*' 글롭을 셸이 전개해야 하므로 인용하지 않음)
         """
         if not file_patterns:
             return None
         file_list = ' '.join(file_patterns)
-        flag = '-Eh' if use_extended else '-h'
-        return f"grep {flag} '{grep_pattern}' {file_list} 2>/dev/null"
+        # -s: 없는/못 읽는 파일 메시지 억제 (2>/dev/null 대신 — 잘못된 정규식 같은
+        #     진짜 오류는 stderr 로 남아 로그에 찍히게 한다)
+        flag = '-Ehs' if use_extended else '-hs'
+        return f"grep {flag} -- {shlex.quote(grep_pattern)} {file_list}"
 
     def test_connection(self, server_config):
         """SSH 연결 테스트"""

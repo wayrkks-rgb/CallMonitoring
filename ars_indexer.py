@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 # 백필 버스트: 이 개수만큼 연속 처리 후 라이브 테일 1회 끼워넣음(최신 콜 신선도 유지)
 _BACKFILL_BURST = 10
 
+# 한 파일이 접속 오류로 계속 실패할 때 재시도 상한 (무한 루프 방지)
+_BACKFILL_MAX_RETRY = 5
+
 
 def _detect_encoding(sample):
     """UTF-8 우선, 실패 시 CP949."""
@@ -44,6 +47,8 @@ def _detect_encoding(sample):
 
 
 class ArsIndexer:
+    BACKFILL_MAX_RETRY = _BACKFILL_MAX_RETRY
+
     def __init__(self, store, server_ids=None, poll_interval=5, max_interval=10,
                  conn_manager=None, auth_path=None, retention_days=30,
                  backfill_days=1):
@@ -73,6 +78,7 @@ class ArsIndexer:
         self._t_live = None
         self._t_bf = None
         self._backfill = deque()
+        self._bf_retry = {}          # path -> 재시도 횟수 (무한 재시도 방지)
         self._backfill_inited = False
         self._backfill_done = False
         self._last_purge = None
@@ -181,6 +187,15 @@ class ArsIndexer:
         cur_path = ArsLogFetcher._expand(tmpl, cur_date, now.hour) if '{HH}' in tmpl \
             else ArsLogFetcher._expand(tmpl, cur_date)
 
+        # 라이브 대상 파일은 정의상 확정될 수 없다. 과거 버그/비정상 종료로
+        # 확정돼 있으면 여기서 풀어준다(확정 상태면 _scan_and_store 가 곧바로
+        # 빠져나가 오늘 로그가 영영 색인되지 않으므로 자가복구가 필요).
+        st = self.store.get_scan_state(cur_path)
+        if st and st.get('sealed'):
+            logger.warning("확정된 라이브 파일 해제: %s", cur_path)
+            self.store.set_scan_state(cur_path, st.get('last_offset') or 0,
+                                      st.get('pending_offset') or 0, sealed=0)
+
         # 현재 시각 파일: 절대 seal 안 함
         worked |= self._scan_and_store(server, label, cur_path, cur_date, seal=False)
 
@@ -193,6 +208,17 @@ class ArsIndexer:
                 seal = (now.minute >= 2)  # 정각+2분 지나면 확정
                 worked |= self._scan_and_store(server, label, prev_path,
                                                prev.strftime('%Y-%m-%d'), seal=seal)
+        else:
+            # 일별 파일: 어제자를 자정 직후까지 마저 흡수한다(시간별의 '직전 시각'과 동일).
+            # 이게 없으면 날짜가 바뀌는 순간 어제 파일은 라이브 테일 대상에서 빠지고
+            # 백필 큐에도 없어(기동 시점의 '오늘'이라 제외됨) 마지막 구간이 유실된다.
+            prev = now - timedelta(days=1)
+            pds = prev.strftime('%Y-%m-%d')
+            prev_path = ArsLogFetcher._expand(tmpl, pds)
+            st = self.store.get_scan_state(prev_path)
+            if not st or not st.get('sealed'):
+                seal = (now.hour > 0 or now.minute >= 5)  # 자정+5분 지나면 확정
+                worked |= self._scan_and_store(server, label, prev_path, pds, seal=seal)
         return worked
 
     def _scan_and_store(self, server, label, path, file_date, seal):
@@ -203,9 +229,13 @@ class ArsIndexer:
         last = st['last_offset'] if st else 0
 
         # 파일 크기 확인(1 stat/원격조회). 안 커졌고 seal 아니면 스킵
-        size = self._size_of(server, path)
-        if size is None:
-            if seal and st:  # 사라진 파일 → 확정 처리
+        size, status = self._stat(server, path)
+        if status == 'error':
+            # 접속/권한 오류 — 확정하지 않는다. 확정해 버리면 복구 후에도
+            # 이 파일을 영영 다시 읽지 않는다.
+            return False
+        if size is None:                 # status == 'nofile'
+            if seal and st:              # 사라진 파일 → 확정 처리
                 self.store.set_scan_state(path, last, start, sealed=1)
             return False
         if not seal and size <= last and (st is not None):
@@ -222,14 +252,27 @@ class ArsIndexer:
             logger.debug("인덱싱 %s: %d콜 (%s)", os.path.basename(path), n, label)
         return bool(n)
 
-    def _size_of(self, server, path):
-        """파일 크기 조회 (UNC=os.path.getsize / SSH=file_size). 없으면 None."""
+    def _stat(self, server, path):
+        """
+        (size, status) — status: 'ok' | 'nofile' | 'error'
+
+        '파일 없음'과 '접속/권한 오류'를 구분한다. 구분하지 않으면 SSH 인증이
+        끊긴 동안 멀쩡한 파일이 '없는 파일'로 확정(sealed)되어, 인증을 복구해도
+        그 구간이 영영 색인되지 않는다.
+        """
         if self._is_ssh(server):
-            return self._ssh_io.file_size(server, path)
+            return self._ssh_io.stat(server, path)
         try:
-            return os.path.getsize(path)
-        except OSError:
-            return None
+            return os.path.getsize(path), 'ok'
+        except FileNotFoundError:
+            return None, 'nofile'
+        except OSError as e:
+            logger.warning("파일 확인 실패 %s: %s", path, e)
+            return None, 'error'
+
+    def _size_of(self, server, path):
+        """파일 크기 (없거나 오류면 None). 구분이 필요하면 _stat() 사용."""
+        return self._stat(server, path)[0]
 
     def _scan_file(self, server, path, label, file_date, start_offset, seal):
         """[start_offset, EOF) 를 읽어 종료된 콜 추출. returns (calls, pending, eof) | None"""
@@ -237,22 +280,35 @@ class ArsIndexer:
         offset = start_offset
 
         if self._is_ssh(server):
-            # SSH 모드: [start_offset, EOF) 를 read_range 로 한 번에 받아 라인 반복
+            # SSH 모드: [start_offset, EOF) 를 청크로 끊어 읽는다.
+            # 한 번에 받으면 대용량 시간대에서 SSH 타임아웃이 나고, 이후 매
+            # 폴링마다 같은 구간을 재시도하다 실패해 색인이 영구히 멈춘다.
             size = self._ssh_io.file_size(server, path)
             if size is None:
                 return None
-            if size <= start_offset:
-                data = b''
-            else:
-                data = self._ssh_io.read_range(server, path, start_offset, size - start_offset)
-                if data is None:
-                    return None
-            enc = _detect_encoding(data[:65536]) if data else 'utf-8'
-            for raw in data.splitlines(keepends=True):
+            enc = None
+            carry = b''          # 청크 경계에서 잘린 마지막 줄
+            src = os.path.basename(path)
+            for _pos, chunk in self._ssh_io.read_chunks(server, path, start_offset, size):
+                if enc is None:
+                    enc = _detect_encoding(chunk[:65536])
+                buf = carry + chunk
+                nl = buf.rfind(b'\n')
+                if nl < 0:                    # 아직 개행이 없음 → 다음 청크로 이월
+                    carry = buf
+                    continue
+                body, carry = buf[:nl + 1], buf[nl + 1:]
+                for raw in body.splitlines(keepends=True):
+                    ls = offset
+                    offset += len(raw)
+                    sm.feed(raw.decode(enc, errors='replace'), source=src,
+                            start_offset=ls, end_offset=offset)
+            # 남은 꼬리(개행 없는 마지막 줄): 확정 파일이면 소비하고,
+            # 아직 쓰이는 중이면 offset 을 전진시키지 않아 다음 회차에 다시 읽는다.
+            if carry and seal:
                 ls = offset
-                offset += len(raw)
-                line = raw.decode(enc, errors='replace')
-                sm.feed(line, source=os.path.basename(path),
+                offset += len(carry)
+                sm.feed(carry.decode(enc or 'utf-8', errors='replace'), source=src,
                         start_offset=ls, end_offset=offset)
         else:
             # UNC 모드: 로컬/네트워크 파일 순차 읽기
@@ -310,6 +366,12 @@ class ArsIndexer:
                                 continue
                             items.append((server, label, ArsLogFetcher._expand(tmpl, ds, hh), ds))
                     else:
+                        # 일별 파일: 오늘자는 하루 종일 append 되므로 백필 대상이 아니다.
+                        # 백필은 seal=1 로 확정하는데, 확정된 파일은 _scan_and_store 가
+                        # 곧바로 return False 하므로 라이브 테일이 오늘 파일을 더 이상
+                        # 읽지 않게 된다 → 기동 이후의 오늘 콜이 통째로 색인되지 않음.
+                        if d == 0:
+                            continue
                         items.append((server, label, ArsLogFetcher._expand(tmpl, ds), ds))
         # 최신순(리스트가 이미 최신→과거) 유지
         self._backfill = deque(items)
@@ -329,10 +391,31 @@ class ArsIndexer:
                 self._backfill.append((server, label, path, ds))  # 뒤로 미뤄 재시도
                 return 'retry'
 
-        res = self._scan_file(server, path, label, ds, 0, seal=True)
-        if res is None:  # 없는 파일 → 확정 스킵
+        # 확정(seal) 전에 존재 여부를 먼저 판정한다.
+        # 접속 오류를 '없는 파일'로 오인해 확정하면, 인증/네트워크를 복구해도
+        # 그 구간이 영영 색인되지 않는다 (실제로 SSH 인증이 끊긴 동안 백필이
+        # 지나간 파일들이 전부 sealed=1, offset=0 으로 박제됐다).
+        def _retry():
+            """확정하지 않고 뒤로 미룸. 계속 실패하면 큐에서 내려놓되 sealed 는 안 한다
+            (다음 기동 때 다시 시도된다)."""
+            n = self._bf_retry.get(path, 0) + 1
+            self._bf_retry[path] = n
+            if n <= self.BACKFILL_MAX_RETRY:
+                self._backfill.append((server, label, path, ds))
+            else:
+                logger.warning("백필 포기(미확정, 다음 기동 시 재시도): %s", path)
+            return 'retry'
+
+        _size, status = self._stat(server, path)
+        if status == 'error':
+            return _retry()
+        if status == 'nofile':
             self.store.set_scan_state(path, 0, 0, sealed=1)
             return True
+
+        res = self._scan_file(server, path, label, ds, 0, seal=True)
+        if res is None:      # 읽기 도중 실패 — 확정하지 않고 재시도
+            return _retry()
         completed, pending, eof = res
         n = self.store.upsert_calls(completed) if completed else 0
         self.store.set_scan_state(path, last_offset=eof, pending_offset=eof, sealed=1)

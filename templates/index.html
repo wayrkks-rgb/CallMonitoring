@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>콜 통합 로그 모니터링 시스템</title>
     <link href="/static/css/fontawesome.css?v=3" rel="stylesheet">
+    <!-- 보이는ARS 화면 렌더러 (렌더러/모달/CSS 단일 소스) -->
+    <script src="/static/js/webvoice_render.js?v=2"></script>
     <style>
         * {
             margin: 0;
@@ -526,53 +528,7 @@
         /* 세그먼트 '화면으로 보기' 버튼 */
         .seg-screen-btn{font-size:11px;color:#7048e8;background:#f3f0ff;border:1px solid #e5dbff;border-radius:5px;padding:1px 7px;cursor:pointer;margin-left:6px;}
         .seg-screen-btn:hover{background:#e5dbff;}
-        /* ── 화면 팝업 모달 ── */
-        .wv-modal{display:none;position:fixed;inset:0;z-index:9999;}
-        .wv-modal.open{display:block;}
-        .wv-modal-bg{position:absolute;inset:0;background:rgba(0,0,0,.5);}
-        .wv-modal-box{position:relative;max-width:92vw;max-height:90vh;margin:4vh auto;background:#fff;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);display:flex;flex-direction:column;width:max-content;}
-        .wv-modal-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #eee;font-weight:800;color:#E8590C;font-size:15px;}
-        .wv-modal-x{cursor:pointer;color:#999;font-size:18px;padding:2px 6px;border-radius:6px;}
-        .wv-modal-x:hover{background:#f4f4f4;color:#333;}
-        .wv-modal-body{padding:18px;overflow:auto;}
-        .wv-single{display:flex;justify-content:center;}
-        .wv-flow-scroll{display:flex;gap:8px;align-items:center;overflow-x:auto;padding-bottom:8px;}
-        .wv-flow-item{position:relative;flex:0 0 auto;}
-        .wv-flow-step{position:absolute;top:-8px;left:50%;transform:translateX(-50%);z-index:2;background:#7048e8;color:#fff;font-size:11px;font-weight:700;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(112,72,232,.4);}
-        .wv-flow-arrow{flex:0 0 auto;color:#F47725;font-size:26px;font-weight:700;}
-        /* ── 폰 목업 ── */
-        .wv-phone{width:270px;background:#fff;border:8px solid #2b2b2b;border-radius:26px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.15);}
-        .wv-top{height:18px;background:#2b2b2b;border-radius:0 0 12px 12px;margin:0 78px;}
-        .wv-head{display:flex;align-items:center;justify-content:center;gap:6px;padding:12px 10px 8px;position:relative;}
-        .wv-logo{width:19px;height:19px;border-radius:50%;background:radial-gradient(circle at 62% 38%,#ffce9e,#F47725 68%);box-shadow:inset -2px -2px 3px rgba(0,0,0,.12);}
-        .wv-co{font-weight:800;font-size:14px;color:#333;letter-spacing:-.3px;}
-        .wv-spk{position:absolute;right:12px;top:10px;font-size:8px;color:#999;text-align:center;line-height:1.3;}
-        .wv-spk span{font-size:7px;}
-        .wv-note{background:#fff3ec;text-align:center;padding:10px;font-weight:800;font-size:12px;color:#333;}
-        .wv-body{padding:14px 12px;min-height:320px;}
-        .wv-foot{display:flex;background:linear-gradient(90deg,#8B7B6B,#a08b78);}
-        .wv-f{flex:1;text-align:center;padding:10px 4px;font-size:9px;color:#fff;line-height:1.5;}
-        .wv-f.act{position:relative;color:#F47725;font-weight:800;}
-        .wv-f.act::before{content:'';position:absolute;inset:4px 6px;background:rgba(255,255,255,.92);border-radius:18px;}
-        .wv-f.act span{position:relative;}
-        .wv-cap{background:#2b2b2b;color:#ffd8b8;font-size:10px;text-align:center;padding:6px;font-weight:700;}
-        .wvm-tit{font-weight:800;font-size:15px;margin-bottom:9px;color:#222;line-height:1.4;}
-        .wvm-txt{color:#555;font-size:11px;line-height:1.7;margin-bottom:9px;}
-        .wvm-str{font-weight:700;font-size:11px;color:#333;margin:11px 0 4px;}
-        .wvm-inp{border:1.5px solid #d5d8dd;border-radius:8px;padding:10px;color:#aaa;font-size:11px;margin-bottom:8px;}
-        .wvm-info{background:#f3f4f6;border-radius:8px;padding:8px;font-size:10px;color:#666;margin-bottom:9px;}
-        .wvm-icon{font-size:30px;text-align:center;margin:12px 0;}
-        .wvm-quick{display:flex;gap:10px;justify-content:center;border-bottom:1px solid #eee;padding-bottom:11px;margin-bottom:9px;}
-        .wvm-q{font-size:10px;font-weight:700;color:#444;text-align:center;display:flex;flex-direction:column;gap:4px;align-items:center;}
-        .wvm-qi{font-size:18px;color:#666;}
-        .wvm-menu{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
-        .wvm-m{border:1px solid #eaecef;border-radius:10px;padding:14px 6px;text-align:center;font-weight:700;font-size:11px;line-height:1.4;color:#333;display:flex;flex-direction:column;gap:7px;align-items:center;}
-        .wvm-mi{font-size:20px;color:#555;}
-        .wvm-btn{padding:11px;border-radius:8px;font-weight:700;font-size:12px;text-align:center;margin-top:8px;}
-        .wvm-btn.o{background:#F47725;color:#fff;}
-        .wvm-btn.ghost{background:#f0f1f3;color:#555;}
-        .wvm-btn2{display:flex;gap:8px;margin-top:11px;}
-        .wvm-btn2 .wvm-btn{flex:1;margin-top:0;}
+        /* 보이는ARS 폰 목업/모달 CSS 는 /static/js/webvoice_render.js 가 주입 */
 
     </style>
 </head>
@@ -645,6 +601,11 @@
                 <div class="menu-item" onclick="openTopology()" style="cursor:pointer;">
                     <i class="fas fa-project-diagram"></i>
                     업무 FLOW 뷰어
+                    <i class="fas fa-external-link-alt" style="font-size:10px;opacity:.6;margin-left:auto;"></i>
+                </div>
+                <div class="menu-item" onclick="window.open('/deploy-diff','_blank')" style="cursor:pointer;">
+                    <i class="fas fa-code-compare"></i>
+                    시나리오 배포 DIFF
                     <i class="fas fa-external-link-alt" style="font-size:10px;opacity:.6;margin-left:auto;"></i>
                 </div>
             </div>
@@ -1366,6 +1327,51 @@
                 .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         }
 
+        // ── 타임스탬프 표시 ('MM-DD HH:MM:SS' — 연도만 생략) ──
+        const _RE_TS_FULL = /(\d{4})-(\d{2})-(\d{2})[ T]+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)/;
+        const _RE_TS_TIME = /(\d{2}:\d{2}:\d{2}(?:\.\d+)?)/;
+
+        // 날짜 힌트 → 'MM-DD'. 오탐(전화번호 등)을 피하려 선두만 본다:
+        //   'YYYY-MM-DD …' (로그 원문 접두부) 또는 'YYYYMMDD…' (UCID)
+        function _mmdd(hint) {
+            if (!hint) return '';
+            const s = String(hint);
+            const m = s.match(/^\s*(\d{4})-?(\d{2})-?(\d{2})/);
+            if (!m) return '';
+            const mm = +m[2], dd = +m[3];
+            if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return '';
+            return `${m[2]}-${m[3]}`;
+        }
+
+        /**
+         * 타임스탬프를 'MM-DD HH:MM:SS' 로 정규화.
+         *  ts   : 'YYYY-MM-DD HH:MM:SS.mmm' | 'HH:MM:SS' | null
+         *  hint : ts 에 날짜가 없을 때 쓸 날짜 출처 (원문 라인 / 'YYYY-MM-DD' / UCID)
+         *  날짜를 끝내 못 구하면 시각만 그대로 반환.
+         */
+        function fmtTs(ts, hint) {
+            const s = (ts == null ? '' : String(ts)).trim();
+            if (!s) return '';
+            const dm = s.match(_RE_TS_FULL);
+            if (dm) return `${dm[2]}-${dm[3]} ${dm[4]}`;
+            const tm = s.match(_RE_TS_TIME);
+            if (!tm) return s;
+            const d = _mmdd(hint);
+            return d ? `${d} ${tm[1]}` : tm[1];
+        }
+
+        // ARS 콜의 종료시각 힌트 — 자정을 넘긴 콜은 UCID 날짜 +1일
+        function _callEndHint(call) {
+            const ucid = String(call.ucid || '');
+            const st = call.start_time || '', et = call.end_time || '';
+            if (!/^\d{8}/.test(ucid)) return '';
+            if (!st || !et || et >= st) return ucid;
+            const d = new Date(`${ucid.slice(0,4)}-${ucid.slice(4,6)}-${ucid.slice(6,8)}T00:00:00`);
+            d.setDate(d.getDate() + 1);
+            const p = n => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+        }
+
         function onSearchModeChange(mode) {
             _searchMode = mode;
             stopAutoRefresh();
@@ -1577,7 +1583,7 @@
             return (rawLines || []).map(l => {
                 const s = (l || '').replace(/\r?\n$/, '');
                 const m = s.match(/(\d{2}:\d{2}:\d{2})/);
-                const ts = m ? m[1] : '(시간 없음)';
+                const ts = m ? fmtTs(m[1], s) : '(시간 없음)';
                 const tsClass = m ? 'timeline-ts' : 'timeline-ts no-ts';
 
                 // 접두부 제거 → [채널] [태그] 내용 분리
@@ -1622,7 +1628,7 @@
         function timelineRowsObj(lines) {
             return (lines || []).map(item => {
                 const tsClass = item.timestamp ? 'timeline-ts' : 'timeline-ts no-ts';
-                const tsText  = item.timestamp || '(시간 없음)';
+                const tsText  = fmtTs(item.timestamp, item.line) || '(시간 없음)';
                 return `<div class="timeline-row"><span class="${tsClass}">${tsText}</span><span class="timeline-content">${esc(item.line)}</span></div>`;
             }).join('');
         }
@@ -1648,12 +1654,12 @@
                 const d = _dxmlOf(s);
                 if (d && !_isSubDxml(d) && (cur === null || cur.dxml !== d)) {
                     const tm = s.match(/(\d{2}:\d{2}:\d{2})/);
-                    cur = { dxml: d, time: tm ? tm[1] : '', lines: [], subs: {} };
+                    cur = { dxml: d, time: tm ? fmtTs(tm[1], s) : '', lines: [], subs: {} };
                     segs.push(cur);
                 }
                 if (!cur) {
                     const tm = s.match(/(\d{2}:\d{2}:\d{2})/);
-                    cur = { dxml: '(콜 시작)', time: tm ? tm[1] : '', lines: [], subs: {} };
+                    cur = { dxml: '(콜 시작)', time: tm ? fmtTs(tm[1], s) : '', lines: [], subs: {} };
                     segs.push(cur);
                 }
                 cur.lines.push(s);
@@ -1717,7 +1723,7 @@
             const rows = calls.map((call, idx) => {
                 const vgwCnt = call.vgw ? (call.vgw.session_count || 0) : 0;
                 return `<tr data-idx="${idx}" onclick="showInboundCall(${idx}, this)">
-                    <td>${esc(call.start_time)} ~ ${esc(call.end_time)}</td>
+                    <td>${esc(fmtTs(call.start_time, call.ucid))} ~ ${esc(fmtTs(call.end_time, _callEndHint(call)))}</td>
                     <td>${esc(call.cust_id) || '-'}</td>
                     <td>${esc(call.phone) || '-'}</td>
                     <td>${esc(call.server)}</td>
@@ -1779,7 +1785,7 @@
                     <span style="font-size:11px; font-weight:700; color:#fff; background:#f0ad4e; padding:2px 8px; border-radius:10px;">ARS</span>
                     <strong>${esc(call.server)}</strong>
                     <span style="color:#555;">채널 ${esc(call.channel)}</span>
-                    <span style="color:#555;">${esc(call.start_time)} ~ ${esc(call.end_time)}</span>
+                    <span style="color:#555;">${esc(fmtTs(call.start_time, call.ucid))} ~ ${esc(fmtTs(call.end_time, _callEndHint(call)))}</span>
                     <span style="font-size:11px; color:#999;">(${esc(call.end_by)})</span>
                 </div>
                 <div class="server-info" style="margin-bottom:8px;">
@@ -1809,7 +1815,7 @@
 
             let rows = flowResults.map((r, idx) => {
                 const hostStr = (r.hostnames || []).join(', ') || '-';
-                const ts      = r.first_timestamp || '-';
+                const ts      = fmtTs(r.first_timestamp) || '-';
                 const keyShort = r.session_key.length > 40
                     ? r.session_key.substring(0, 40) + '…'
                     : r.session_key;
@@ -1858,7 +1864,7 @@
 
             const rows = sessionResult.flow_lines.map(item => {
                 const tsClass = item.timestamp ? 'timeline-ts' : 'timeline-ts no-ts';
-                const tsText  = item.timestamp || '(시간 없음)';
+                const tsText  = fmtTs(item.timestamp, item.line) || '(시간 없음)';
                 // XSS 방지
                 const safeContent = (item.line || '')
                     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -1961,7 +1967,7 @@
                         div.className = 'timeline-row';
                         div.style = 'border-bottom:1px solid #eef0f3; padding:6px 0;';
                         div.innerHTML = `
-                            <span class="timeline-ts">${item.timestamp || '(시간 없음)'}</span>
+                            <span class="timeline-ts">${fmtTs(item.timestamp, item.line) || '(시간 없음)'}</span>
                             ${srvBadge}
                             <span class="timeline-content">${safeContent}</span>`;
                         container.appendChild(div);
@@ -2693,8 +2699,8 @@
                 return `<tr>
                     <td style="text-align:center;">${r.no}</td>
                     <td class="session-key-cell">${r.session_key}</td>
-                    <td style="text-align:center; font-family:monospace;">${r.start_time}</td>
-                    <td style="text-align:center; font-family:monospace;">${r.end_time}</td>
+                    <td style="text-align:center; font-family:monospace;">${esc(fmtTs(r.start_time) || r.start_time)}</td>
+                    <td style="text-align:center; font-family:monospace;">${esc(fmtTs(r.end_time) || r.end_time)}</td>
                     <td style="font-family:monospace;">${r.phone}</td>
                     <td style="font-family:monospace;">${r.ucid}</td>
                     <td style="font-family:monospace; font-size:11px;">${r.call09}</td>
@@ -2711,8 +2717,8 @@
                             <tr>
                                 <th style="width:40px;">#</th>
                                 <th>세션키</th>
-                                <th style="width:80px;">시작</th>
-                                <th style="width:80px;">종료</th>
+                                <th style="width:120px;">시작</th>
+                                <th style="width:120px;">종료</th>
                                 <th>전화번호</th>
                                 <th>UCID</th>
                                 <th>CALL09</th>
@@ -3082,125 +3088,6 @@
             } catch (e) { alert('오류: ' + e.message); }
         }
 
-/* =====================================================================
- * webvoice_render.js — 보이는ARS 화면 렌더러 + 팝업 모달 (index.html 내장용)
- * ---------------------------------------------------------------------
- *  · 연동정의서 프로토콜(S$HLIxxx;...) → 폰 목업 HTML
- *  · openScreenModal(payload|code, name) : 단일 화면 팝업
- *  · openScreenFlowModal(screens)        : 화면 흐름(여러 장) 팝업
- *  · WV_SCREEN_MAP : 화면코드→이름 (screen_map.json 내장)
- * ===================================================================== */
-
-const WV_SCREEN_MAP = {"HLIA00": {"name": "시작하기 화면", "category": "메인/시작"}, "HLIA01": {"name": "메인 화면", "category": "메인/시작"}, "HLIA10": {"name": "2단 메뉴 화면", "category": "메인/시작"}, "HLIB00": {"name": "메뉴 리스트", "category": "메뉴리스트/고객확인"}, "HLIB01": {"name": "상담사연결 전용 메뉴 리스트", "category": "메뉴리스트/고객확인"}, "HLIB02": {"name": "아코디언 메뉴 리스트 화면", "category": "메뉴리스트/고객확인"}, "HLIB10": {"name": "고객 확인", "category": "메뉴리스트/고객확인"}, "HLIC00": {"name": "1개 항목 입력 (일반)", "category": "입력"}, "HLIC01": {"name": "1개 항목 입력 (SMS인증, 데이터변경불가)", "category": "입력"}, "HLIC02V": {"name": "1개 항목 입력 (보안)", "category": "입력"}, "HLIC03": {"name": "인증번호 입력", "category": "입력"}, "HLIC04V": {"name": "주민등록번호 입력", "category": "입력"}, "HLIC05V": {"name": "보안카드 입력", "category": "입력"}, "HLIC06": {"name": "2개 항목 입력 (일반,일반)", "category": "입력"}, "HLIC07": {"name": "카카오페이 인증", "category": "입력"}, "HLIC07A": {"name": "간편인증", "category": "입력"}, "HLIC07B": {"name": "간편인증 3자통화", "category": "입력"}, "HLIC07C": {"name": "간편인증 3자통화 2", "category": "입력"}, "HLIC08": {"name": "1개 항목 선택", "category": "입력"}, "HLIC09": {"name": "2개 항목 선택", "category": "입력"}, "HLIC10": {"name": "금융기관 선택 및 계좌번호 입력", "category": "입력"}, "HLIC11": {"name": "금융기관/이체일 선택 및 계좌번호 입력", "category": "입력"}, "HLIC12": {"name": "상환방법/이체일 선택", "category": "입력"}, "HLIC13": {"name": "신분증 인증", "category": "입력"}, "HLIC20": {"name": "이메일 입력", "category": "입력"}, "HLID00": {"name": "단일 테이블, 유의사항", "category": "테이블/조회"}, "HLID01": {"name": "다중 테이블, 유의사항", "category": "테이블/조회"}, "HLID10": {"name": "조회 내역 안내 A (혼합형, 메뉴리스트)", "category": "테이블/조회"}, "HLID20": {"name": "조회 내역 안내 B (혼합형, 버튼)", "category": "테이블/조회"}, "HLID21": {"name": "조회 내역 안내 C (혼합형 신규)", "category": "테이블/조회"}, "HLID23": {"name": "신청내역 점검", "category": "테이블/조회"}, "HLID30": {"name": "장문 내용 안내", "category": "테이블/조회"}, "HLID31": {"name": "약정서 안내", "category": "테이블/조회"}, "HLID32": {"name": "동의 여부 확인 A", "category": "테이블/조회"}, "HLID33": {"name": "동의 여부 확인 B", "category": "테이블/조회"}, "HLID34": {"name": "대출상품설명서", "category": "테이블/조회"}, "HLID40": {"name": "동의항목 녹취 (버튼N)", "category": "테이블/조회"}, "HLID41": {"name": "동의항목 녹취 (버튼Y)", "category": "테이블/조회"}, "HLID50": {"name": "입력형 테이블 A (가로형)", "category": "테이블/조회"}, "HLID51": {"name": "입력형 테이블 B (세로형 3열)", "category": "테이블/조회"}, "HLID52": {"name": "입력형 테이블 C (신청금액 토탈)", "category": "테이블/조회"}, "HLID60": {"name": "조회 결과 테이블 (나의 계약정보)", "category": "테이블/조회"}, "HLID61": {"name": "PDF 뷰 화면", "category": "테이블/조회"}, "HLIE00": {"name": "안내 화면 A (기본형)", "category": "안내"}, "HLIE01": {"name": "안내 화면 B (상담사 연결 대기정보)", "category": "안내"}, "HLIE02": {"name": "안내 화면 C (안내 및 버튼)", "category": "안내"}, "HLIE03": {"name": "안내 화면 E (안내 및 테이블)", "category": "안내"}, "HLIE04": {"name": "안내 화면 F (안내 및 유의사항)", "category": "안내"}, "HLIE05": {"name": "안내 화면 G (안내, 테이블, 버튼)", "category": "안내"}, "HLIE06": {"name": "안내 화면 H (URL 연결)", "category": "안내"}, "HLIF00": {"name": "신계약모니터링 초기화면", "category": "신계약모니터링"}, "HLIF10": {"name": "개인(신용)정보 수집 및 모니터링 동의", "category": "신계약모니터링"}, "HLIF20V": {"name": "휴대폰 본인인증 - 정보 입력", "category": "신계약모니터링"}, "HLIF21": {"name": "휴대폰 본인인증 - 인증번호 입력", "category": "신계약모니터링"}, "HLIF30": {"name": "대상계약 확인 - 대상계약 부재", "category": "신계약모니터링"}, "HLIF31": {"name": "대상계약 확인 - 대상계약 존재", "category": "신계약모니터링"}, "HLIF40": {"name": "모니터링 진행", "category": "신계약모니터링"}, "HLIF41": {"name": "모니터링 진행 (정답 표기)", "category": "신계약모니터링"}, "HLIF42": {"name": "적합성 원칙 확인", "category": "신계약모니터링"}, "HLIF50": {"name": "모니터링 완료", "category": "신계약모니터링"}};
-
-// 프로토콜 파서
-function _wvParse(payload) {
-  return (payload || '').split(';').filter(s => s).map(s => s.split('$'));
-}
-function _wvClean(s) { return (s || '').replace(/\|/g, ' '); }
-function _wvEsc(s) { return (s == null ? '' : String(s)).replace(/[&<>]/g,
-  m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m])); }
-
-// 헬퍼 추가
-function _callDate(ucid) {
-  if (ucid && ucid.length >= 8 && /^\d{8}/.test(ucid)) {
-    const d = ucid.slice(0,8);
-    return d.slice(0,4)+'-'+d.slice(4,6)+'-'+d.slice(6,8);
-  }
-    return '';
-}
-
-
-// 프로토콜 → 폰 목업 HTML
-function renderWebVoiceScreen(code, name, payload) {
-  const kv = _wvParse(payload || ('S$' + code));
-  const g = k => kv.filter(p => p && p[0] === k);
-  const mute = g('MUTE');
-  const muteOn = mute.length && mute[0][2] === 'ON';
-  let body = '';
-
-  g('NOT').forEach(p => { if (p[2] === 'ON') body += `<div class="wvm-info">📢 ${_wvEsc(_wvClean(p[4]))}</div>`; });
-  if (g('IMG').length) body += `<div class="wvm-icon">🎧</div>`;
-  g('TIT').forEach(p => { if (p[3]) body += `<div class="wvm-tit">${_wvClean(p[3])}</div>`; });
-  g('TXT').forEach(p => { if (p[3]) body += `<div class="wvm-txt">${_wvClean(p[3])}</div>`; });
-  g('STR').forEach(p => { if (p[2]) body += `<div class="wvm-str">${_wvClean(p[2])}</div>`; });
-  ['INP', 'INP2', 'INPH'].forEach(k => g(k).forEach(p => {
-    let ph = '';
-    [p[4], p[3], p[2]].forEach(c => { if (c && !/^\d+$/.test(c) && !ph) ph = c; });
-    body += `<div class="wvm-inp">${_wvEsc(_wvClean(ph) || '입력')}</div>`;
-  }));
-  g('INPTXT').forEach(p => { if (p[2]) body += `<div class="wvm-btn o">${_wvEsc(_wvClean(p[2]))}</div>`; });
-  g('BTNZ').forEach(p => { if (p[2]) body += `<div class="wvm-btn ghost">${_wvEsc(_wvClean(p[2]))}</div>`; });
-  const q = g('BTNQ2');
-  if (q.length) body += '<div class="wvm-quick">' + q.map(p => `<div class="wvm-q"><span class="wvm-qi">▦</span>${_wvEsc(_wvClean(p[3]))}</div>`).join('') + '</div>';
-  const m = g('BTNM');
-  if (m.length) body += '<div class="wvm-menu">' + m.map(p => `<div class="wvm-m"><div class="wvm-mi">📄</div>${_wvClean(p[3])}</div>`).join('') + '</div>';
-  ['BTN2', 'BTNE2'].forEach(k => {
-    const b = g(k);
-    if (b.length) body += '<div class="wvm-btn2">' + b.map((p, i) => `<div class="wvm-btn ${i === b.length - 1 ? 'o' : 'ghost'}">${_wvEsc(_wvClean(p[2]))}</div>`).join('') + '</div>';
-  });
-
-  const spk = muteOn ? '🔊<br><span>음성ON</span>' : '🔈<br><span>음성OFF</span>';
-  return `<div class="wv-phone">
-    <div class="wv-top"></div>
-    <div class="wv-head"><span class="wv-logo"></span><span class="wv-co">한화생명</span><span class="wv-spk">${spk}</span></div>
-    <div class="wv-note">삶의 가치를 더하는 한화생명입니다.</div>
-    <div class="wv-body">${body || "<div class='wvm-txt'>(" + code + ")</div>"}</div>
-    <div class="wv-foot"><div class="wv-f">🔊<br>음성 ARS</div><div class="wv-f act"><span>🎧<br>상담사</span></div><div class="wv-f">✕<br>통화종료</div></div>
-    <div class="wv-cap">${_wvEsc(code)}${name ? ' · ' + _wvEsc(name) : ''}</div>
-  </div>`;
-}
-
-// 모달 인프라
-function _ensureScreenModal() {
-  let m = document.getElementById('wvScreenModal');
-  if (m) return m;
-  m = document.createElement('div');
-  m.id = 'wvScreenModal';
-  m.className = 'wv-modal';
-  m.innerHTML = `<div class="wv-modal-bg" onclick="closeScreenModal()"></div>
-    <div class="wv-modal-box">
-      <div class="wv-modal-head"><span id="wvModalTitle">화면 미리보기</span>
-        <span class="wv-modal-x" onclick="closeScreenModal()">✕</span></div>
-      <div class="wv-modal-body" id="wvModalBody"></div>
-    </div>`;
-  document.body.appendChild(m);
-  return m;
-}
-function closeScreenModal() {
-  const m = document.getElementById('wvScreenModal');
-  if (m) m.classList.remove('open');
-}
-
-// 단일 화면 팝업 (payload 있으면 실데이터, 없으면 코드만)
-function openScreenModal(code, name, payload) {
-  const m = _ensureScreenModal();
-  document.getElementById('wvModalTitle').textContent =
-    '📱 ' + code + (name ? ' · ' + name : '');
-  document.getElementById('wvModalBody').innerHTML =
-    `<div class="wv-single">${renderWebVoiceScreen(code, name || (WV_SCREEN_MAP[code] || {}).name, payload)}</div>`;
-  m.classList.add('open');
-}
-
-// 화면 흐름 팝업 (여러 장 나란히) — screens: [{code,name,payload}]
-function openScreenFlowModal(screens, title) {
-  const m = _ensureScreenModal();
-  document.getElementById('wvModalTitle').textContent = title || '📱 화면 진행 흐름';
-  const cards = (screens || []).map((s, i) => {
-    const nm = s.name || (WV_SCREEN_MAP[s.code] || {}).name || '';
-    const arrow = i > 0 ? '<div class="wv-flow-arrow">›</div>' : '';
-    return arrow + `<div class="wv-flow-item">
-      <div class="wv-flow-step">${i + 1}</div>
-      ${renderWebVoiceScreen(s.code, nm, s.payload)}
-    </div>`;
-  }).join('');
-  document.getElementById('wvModalBody').innerHTML =
-    `<div class="wv-flow-scroll">${cards || '<div style="padding:40px;color:#aaa;">표시할 화면이 없습니다.</div>'}</div>`;
-  m.classList.add('open');
-}
-
-// ESC 닫기
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeScreenModal(); });
 
 
         /* ════════ 사전 노티 + 화면 팝업 + topology 연동 ════════ */
@@ -3243,9 +3130,12 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closeScreenM
                 const chips=p.screen_flow.map((s,i)=>{
                     const last=(i===p.screen_flow.length-1);
                     const arw=i>0?'<span class="arw">›</span>':'';
-                    return `${arw}<span class="pscreen ${last?'last':''}" title="${esc(s.code)} (클릭: 화면 보기)" onclick='openScreenModal(${JSON.stringify(s.code)}, ${JSON.stringify(s.name||'')}, ${JSON.stringify(s.payload||'')})'>${esc(s.name||s.code)}</span>`;
+                    // label = 화면 제목(TIT) 기반 실제 메뉴명, 없으면 템플릿명(name)
+                    const cap=s.label||s.name||s.code;
+                    const tip=`${s.code}${s.name?' · '+s.name:''}${s.ts?' · '+s.ts:''} (클릭: 화면 보기)`;
+                    return `${arw}<span class="pscreen ${last?'last':''}" title="${esc(tip)}" onclick='openScreenModal(${JSON.stringify(s.code)}, ${JSON.stringify(s.name||'')}, ${JSON.stringify(s.payload||'')})'>${esc(cap)}</span>`;
                 }).join('');
-                screenHtml=`<div class="precheck-screens"><span class="lbl">📱 화면 진행</span>${chips}</div>`;
+                screenHtml=`<div class="precheck-screens"><span class="lbl">📱 화면 진행 (${p.screen_flow.length})</span>${chips}</div>`;
             }
             const flowBtn = (p.screen_flow && p.screen_flow.length)
                 ? `<button onclick='openScreenFlowModal(_lastPrecheck.screen_flow, "📱 이 콜의 화면 진행 흐름")'><i class="fas fa-images"></i> 화면 흐름 전체 보기</button>` : '';

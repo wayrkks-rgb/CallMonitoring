@@ -179,14 +179,21 @@ class ArsIndexStore:
             return cur.rowcount
 
     def stats(self):
+        today = datetime.now().strftime('%Y-%m-%d')
         with self._lock:
             total = self._conn.execute("SELECT COUNT(*) FROM calls").fetchone()[0]
             latest = self._conn.execute(
                 "SELECT MAX(indexed_at) FROM calls").fetchone()[0]
             files = self._conn.execute(
                 "SELECT COUNT(*) FROM scan_state WHERE sealed = 0").fetchone()[0]
+            # '오늘 로그가 안 나온다' 진단용 — 오늘 색인된 콜 수와 마지막 콜 시각
+            today_calls, last_call = self._conn.execute(
+                "SELECT COUNT(*), MAX(start_time) FROM calls WHERE start_time >= ?",
+                (f"{today} 00:00:00",)).fetchone()
         return {'indexed_calls': total, 'last_indexed_at': latest,
-                'active_files': files}
+                'active_files': files,
+                'today': today,
+                'today_calls': today_calls, 'today_last_call': last_call}
 
     def close(self):
         with self._lock:

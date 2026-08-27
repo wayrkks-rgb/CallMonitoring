@@ -49,8 +49,15 @@ class ArsSshIO:
     (runner(cmd_list) -> (returncode, stdout_bytes, stderr_text)).
     """
 
-    def __init__(self, connect_timeout=10, runner=None):
+    # 한 번의 SSH 왕복으로 읽어올 최대 바이트.
+    # 남은 구간을 통째로 요청하면 base64(≈4/3배) 문자열이 SSH stdout 으로
+    # 쏟아져 타임아웃이 나고, 그때부터 offset 이 영영 전진하지 못한다.
+    READ_CHUNK = 8 * 1024 * 1024
+
+    def __init__(self, connect_timeout=10, runner=None, timeout=120, read_timeout=300):
         self.connect_timeout = connect_timeout
+        self.timeout = timeout
+        self.read_timeout = read_timeout
         self._runner = runner or self._default_runner
 
     # SSH 타깃 문자열 (hostname 우선, 없으면 user@ip)
@@ -72,8 +79,17 @@ class ArsSshIO:
                '-o', 'StrictHostKeyChecking=accept-new',
                '-o', 'BatchMode=yes']
         key_path = server.get('ssh_key_path')
-        if key_path and Path(key_path).exists():
-            cmd += ['-i', str(key_path)]
+        if key_path:
+            if Path(key_path).exists():
+                # 설정에 키가 있으면 그 키만 쓰도록 고정 — 에이전트/기본 키가
+                # 먼저 시도돼 서버의 인증 시도 횟수를 소진하는 것을 막는다.
+                cmd += ['-i', str(key_path), '-o', 'IdentitiesOnly=yes']
+            else:
+                # 예전엔 조용히 -i 를 빼고 진행해 'Permission denied'(rc=255)만
+                # 남았다. 키 파일이 사라졌는지/서비스 계정에서 안 보이는지를
+                # 로그로 드러낸다.
+                logger.warning("SSH 키 파일 없음 — 키 인증 불가: %s "
+                               "(서비스 계정에서 접근 가능한 경로인지 확인)", key_path)
         port = server.get('ssh_port', 22)
         if port and int(port) != 22:
             cmd += ['-p', str(port)]
@@ -84,36 +100,61 @@ class ArsSshIO:
         """PowerShell 스크립트 → -EncodedCommand 용 UTF-16LE base64."""
         return base64.b64encode(script.encode('utf-16-le')).decode('ascii')
 
-    def _default_runner(self, cmd):
+    def _default_runner(self, cmd, timeout=None):
         try:
             p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               stdin=subprocess.DEVNULL, timeout=120)
+                               stdin=subprocess.DEVNULL, timeout=timeout or self.timeout)
             return p.returncode, p.stdout, (p.stderr or b'').decode('utf-8', 'ignore')
         except FileNotFoundError:
             return 127, b'', 'OpenSSH 미설치'
         except subprocess.TimeoutExpired:
-            return 124, b'', 'SSH 타임아웃'
+            return 124, b'', f'SSH 타임아웃({timeout or self.timeout}초)'
 
-    def _run_ps(self, server, script):
+    def _run_ps(self, server, script, timeout=None):
         """서버에서 PowerShell 스크립트 실행 → (rc, stdout_bytes, stderr)."""
         target = self.ssh_target(server)
         if not target:
             return 1, b'', 'SSH 대상 없음(hostname/ip 확인)'
+        # 출력 인코딩을 UTF-8 로 고정하지 않으면 콘솔 기본 코드페이지(한국어 Windows
+        # = CP949)로 나와, 파이썬이 UTF-8 로 디코드할 때 한글이 깨지거나 사라진다.
+        # (base64 로 받는 read_range 는 무관하지만 grep 결과는 원문 텍스트다)
+        script = ("[Console]::OutputEncoding=New-Object Text.UTF8Encoding $false;"
+                  + script)
         remote = f'powershell -NoProfile -NonInteractive -EncodedCommand {self._encode_ps(script)}'
         cmd = self._ssh_base(server) + [target, remote]
-        return self._runner(cmd)
+        try:
+            return self._runner(cmd, timeout)
+        except TypeError:
+            return self._runner(cmd)   # timeout 인자를 받지 않는 주입 runner 호환
 
     # ── 원시연산 ───────────────────────────────────────────
-    def file_size(self, server, path):
-        """파일 크기(byte). 없거나 오류면 None."""
-        script = f"$ErrorActionPreference='Stop'; (Get-Item -LiteralPath '{path}').Length"
+    def stat(self, server, path):
+        """
+        (size, status) 반환. status: 'ok' | 'nofile' | 'error'
+
+        '파일 없음'과 '접속/실행 실패'를 반드시 구분해야 한다. 둘을 같이 None 으로
+        뭉개면 인증이 끊긴 동안 멀쩡한 파일이 '없는 파일'로 확정(sealed)되어
+        인증을 복구해도 영영 색인되지 않는다.
+        """
+        script = ("$ErrorActionPreference='SilentlyContinue';"
+                  f"if(Test-Path -LiteralPath '{path}')"
+                  f"{{(Get-Item -LiteralPath '{path}').Length}}else{{'NOFILE'}}")
         rc, out, err = self._run_ps(server, script)
         if rc != 0:
-            return None
-        try:
-            return int(out.decode('ascii', 'ignore').strip())
-        except (ValueError, TypeError):
-            return None
+            logger.warning("파일 확인 실패(접속/실행 오류) %s: rc=%s %s",
+                           path, rc, (err or '').strip()[:160])
+            return None, 'error'
+        txt = out.decode('ascii', 'ignore').strip()
+        if txt == 'NOFILE':
+            return None, 'nofile'
+        if txt.isdigit():
+            return int(txt), 'ok'
+        return None, 'error'
+
+    def file_size(self, server, path):
+        """파일 크기(byte). 없거나 오류면 None. (구분이 필요하면 stat() 사용)"""
+        size, _status = self.stat(server, path)
+        return size
 
     def read_range(self, server, path, offset, length):
         """[offset, offset+length) 바이트를 읽어 bytes 반환. 없거나 오류면 None.
@@ -133,14 +174,37 @@ class ArsSshIO:
             "[Convert]::ToBase64String($b,0,$n)"
             "}finally{$f.Close()}"
         )
-        rc, out, err = self._run_ps(server, script)
+        rc, out, err = self._run_ps(server, script, timeout=self.read_timeout)
         if rc != 0:
-            logger.debug(f"read_range 실패 {path}: {err[:150]}")
+            # 조용히 넘기면 offset 이 멈춘 채로 방치돼 원인 파악이 안 된다.
+            logger.warning("read_range 실패 %s [offset=%s len=%s]: %s",
+                           path, offset, length, (err or '').strip()[:200])
             return None
         try:
             return base64.b64decode(out.decode('ascii', 'ignore').strip() or '')
-        except Exception:
+        except Exception as e:
+            logger.warning("read_range 디코드 실패 %s: %s", path, e)
             return None
+
+    def read_chunks(self, server, path, offset, end):
+        """
+        [offset, end) 를 READ_CHUNK 단위로 나눠 순차 반환 (제너레이터).
+
+        남은 구간을 한 번에 요청하면 대용량 시간대에서 타임아웃이 나고,
+        그 뒤로는 매 폴링마다 같은(더 커진) 구간을 재시도하다 실패해
+        해당 파일의 색인이 영구히 멈춘다. 청크로 끊어 진행분을 확정한다.
+        """
+        pos = int(offset or 0)
+        end = int(end or 0)
+        while pos < end:
+            want = min(self.READ_CHUNK, end - pos)
+            data = self.read_range(server, path, pos, want)
+            if not data:
+                return          # 실패/EOF → 여기까지만 반영 (다음 폴링에서 이어감)
+            yield pos, data
+            pos += len(data)
+            if len(data) < want:
+                return          # 짧게 읽힘 → 이번 회차는 여기까지
 
     def read_all(self, server, path):
         """파일 전체 bytes (없으면 None). 대용량엔 grep 을 우선 사용할 것."""
@@ -156,39 +220,79 @@ class ArsSshIO:
         rc, out, err = self._run_ps(server, script)
         return rc == 0 and out.decode('ascii', 'ignore').strip() == '1'
 
-    def grep(self, server, paths, pattern, regex=True, encoding='utf8'):
+    # -EncodedCommand 는 Windows 명령행 길이 제한(약 32,767자)에 걸린다.
+    # base64(UTF-16LE)는 원문의 약 2.7배로 부풀므로 스크립트를 이 길이 이하로 유지한다.
+    # (경로 2개 × 7일 = 후보 336개면 인코딩 후 37KB 로 한도를 넘어 명령 자체가 실패했다)
+    MAX_SCRIPT = 8000
+
+    # 파일 인코딩 후보 — ARS 로그는 UTF-8 과 CP949(=default)가 섞여 있다.
+    # utf8 로만 읽으면 CP949 파일에서 한글 패턴이 전혀 매칭되지 않는다.
+    GREP_ENCODINGS = ('utf8', 'default')
+
+    def _grep_script(self, paths, pat, regex, encoding):
+        # 주의: f-string 안의 PowerShell 중괄호는 {{ }} 로 이스케이프해야 하지만,
+        #       PowerShell 에 전달될 때는 { } 하나로 나가야 한다.
+        arr = ','.join("'" + p.replace("'", "''") + "'" for p in paths)
+        simple = '' if regex else '-SimpleMatch '
+        return (
+            "$ErrorActionPreference='SilentlyContinue';"
+            f"$ps=@({arr}) | Where-Object {{ Test-Path -LiteralPath $_ }};"
+            "if($ps){"
+            f"Select-String -LiteralPath $ps -Encoding {encoding} {simple}-Pattern '{pat}'"
+            # 포매터를 거치면 콘솔 폭에서 줄이 접히거나 잘린다 → 직접 stdout 출력
+            " | ForEach-Object { [Console]::Out.WriteLine($_.Line) }"
+            "}"
+        )
+
+    def _grep_batches(self, paths, pat, regex, encoding):
+        """스크립트 길이 한도에 맞춰 경로를 나눈다."""
+        batches, cur = [], []
+        for p in paths:
+            cur.append(p)
+            if len(self._grep_script(cur, pat, regex, encoding)) > self.MAX_SCRIPT:
+                if len(cur) == 1:          # 경로 하나만으로 한도 초과 — 그대로 시도
+                    batches.append(cur)
+                    cur = []
+                else:
+                    batches.append(cur[:-1])
+                    cur = [p]
+        if cur:
+            batches.append(cur)
+        return batches
+
+    def grep(self, server, paths, pattern, regex=True, encoding=None):
         """서버측 Select-String 으로 매칭 라인만 회수.
 
         Args:
             paths: 로컬 경로 리스트 (존재하지 않는 경로는 무시됨)
             regex: True=.NET 정규식, False=리터럴(SimpleMatch)
-            encoding: 'utf8' | 'default'(CP949 등 시스템 기본) | 'unicode' ...
+            encoding: 파일 인코딩 지정. None 이면 utf8 → default(CP949) 순으로 시도
         Returns:
             (lines: list[str], error: str|None)
         """
         if not paths:
             return [], None
-        # 경로 배열 리터럴 구성 (작은따옴표 이스케이프)
-        arr = ','.join("'" + p.replace("'", "''") + "'" for p in paths)
         pat = pattern.replace("'", "''")
-        simple = '' if regex else '-SimpleMatch '
-        # 존재하는 경로만 필터 → Select-String (여러 파일 한 번에)
-        # 주의: 이 문자열은 f-string 이 아니므로 중괄호를 이스케이프하지 말 것
-        #       ('{{ }}' 로 쓰면 PowerShell 에 그대로 전달돼 스크립트블록 오류 → 출력 0줄)
-        script = (
-            "$ErrorActionPreference='SilentlyContinue';"
-            f"$ps=@({arr}) | Where-Object {{ Test-Path -LiteralPath $_ }};"
-            "if($ps){"
-            f"Select-String -LiteralPath $ps -Encoding {encoding} {simple}-Pattern '{pat}'"
-            " | ForEach-Object { $_.Line }"
-            "}"
-        )
-        rc, out, err = self._run_ps(server, script)
-        if rc != 0 and err:
-            return [], err[:200]
-        text = out.decode('utf-8', 'ignore')
-        lines = [l.rstrip('\r\n') for l in text.splitlines() if l.strip()]
-        return lines, None
+        encs = (encoding,) if encoding else self.GREP_ENCODINGS
+        last_err = None
+
+        for enc in encs:
+            lines = []
+            for batch in self._grep_batches(paths, pat, regex, enc):
+                rc, out, err = self._run_ps(server, self._grep_script(batch, pat, regex, enc))
+                if rc != 0:
+                    last_err = (err or '').strip()[:200] or f'PowerShell rc={rc}'
+                    logger.warning("ARS grep 실패 (%s, 경로 %d개): %s",
+                                   enc, len(batch), last_err)
+                    continue
+                text = out.decode('utf-8', 'ignore')
+                lines += [l.rstrip('\r\n') for l in text.splitlines() if l.strip()]
+            if lines:
+                if enc != encs[0]:
+                    logger.info("ARS grep: %s 인코딩으로 매칭 (%d줄)", enc, len(lines))
+                return lines, None
+
+        return [], last_err
 
 
 # ── SSH 기반 ARS 페처 (UNC 페처와 동일 인터페이스) ──────────
@@ -257,7 +361,13 @@ class ArsSshLogFetcher(ArsLogFetcher):
 
         servers = self._ars_ssh_servers()
         label_map = {get_server_label(s): s for _, s in servers}
-        labels = list(label_map.keys()) or None
+        if not label_map:
+            # 선택 조건에 맞는 SSH ARS 서버가 없으면 결과도 없어야 한다.
+            # (UNC 쪽과 동일 — labels=None 은 '서버 필터 없음'이 되어 선택하지 않은
+            #  서버의 콜까지 돌려준다)
+            return {'success': True, 'search_key': needle, 'call_count': 0,
+                    'calls': [], 'errors': self.errors or None}
+        labels = list(label_map.keys())
 
         rows = store.search(phone=phone, cust_id=cust_id,
                             start_date=self.start_date, end_date=self.end_date,
@@ -316,9 +426,13 @@ class _NoopConn:
 
 
 def _time_of_safe(line):
-    """라인에서 HH:MM:SS 추출 (실패 시 '')."""
+    """라인에서 표시용 'YYYY-MM-DD HH:MM:SS' 추출 (날짜 접두부 없으면 HH:MM:SS, 실패 시 '')."""
     import re
-    m = re.search(r'\b(\d{2}:\d{2}:\d{2})\b', line or '')
+    s = line or ''
+    m = re.search(r'\b(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\b', s)
+    if m:
+        return f'{m.group(1)} {m.group(2)}'
+    m = re.search(r'\b(\d{2}:\d{2}:\d{2})\b', s)
     return m.group(1) if m else ''
 
 

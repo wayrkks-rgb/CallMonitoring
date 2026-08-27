@@ -62,6 +62,8 @@ from routes.monitor import monitor_bp
 from routes.topology import topology_bp
 from routes.precheck import precheck_bp
 from routes.topology_screen  import topology_screen_bp
+# 시나리오 배포 DIFF (/deploy-diff, /api/deploy/*) — 등록이 빠져 있어 404 였음
+from scenario_deploy_routes import deploy_bp
 
 
 app.register_blueprint(search_bp)
@@ -72,6 +74,7 @@ app.register_blueprint(monitor_bp)
 app.register_blueprint(topology_bp)
 app.register_blueprint(precheck_bp)
 app.register_blueprint(topology_screen_bp)
+app.register_blueprint(deploy_bp)
 
 # ── ARS 인덱서 (백그라운드 준실시간 색인) ──────────────────
 from flask import jsonify

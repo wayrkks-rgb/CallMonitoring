@@ -282,6 +282,7 @@ RE_WAITOK    = re.compile(r'\[WAITCALL\]\s+WaitCall\s+Success!')
 RE_CUSTID    = re.compile(r'app\.CustID\s*:?\s*(\d+)')
 RE_PHONE     = re.compile(r'(?:ani\[|ANI\[|call_ani\()(\d{9,12})')
 RE_TIME      = re.compile(r'(\d{2}:\d{2}:\d{2})')
+RE_DATETIME  = re.compile(r'(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})')
 
 
 def _channel_of(line):
@@ -290,8 +291,17 @@ def _channel_of(line):
 
 
 def _time_of(line):
+    """HH:MM:SS (콜 경계 시각 — 날짜는 UCID 앞 8자리에서 구함)"""
     m = RE_TIME.search(line)
     return m.group(1) if m else None
+
+
+def _datetime_of(line):
+    """'YYYY-MM-DD HH:MM:SS' (표시용). 날짜 접두부가 없으면 HH:MM:SS 만."""
+    m = RE_DATETIME.search(line)
+    if m:
+        return f'{m.group(1)} {m.group(2)}'
+    return _time_of(line)
 
 
 class _ChannelStateMachine:
@@ -639,11 +649,18 @@ class ArsLogFetcher:
         # 대상 서버 라벨(선택된 ARS 서버로 제한)
         targets = get_enabled_servers(server_type='ARS', purpose='inbound',
                                       server_ids=self.server_ids, access_method='unc')
-        labels = [get_server_label(s) for _, s in targets] if targets else None
+        if not targets:
+            # 선택 조건에 맞는 UNC ARS 서버가 없으면 결과도 없어야 한다.
+            # 예전엔 labels=None 을 넘겨 store.search 의 '서버 필터 없음'이 되는 바람에
+            # 선택하지 않은 서버(예: 개발/QA 만 골랐는데 운영)의 콜까지 돌려주고,
+            # 그 파일을 UNC 로 읽으려다 실패해 내용도 비어 나왔다.
+            return {'success': True, 'search_key': needle, 'call_count': 0,
+                    'calls': [], 'errors': self.errors or None}
+        labels = [get_server_label(s) for _, s in targets]
 
         rows = store.search(phone=phone, cust_id=cust_id,
                             start_date=self.start_date, end_date=self.end_date,
-                            servers=labels or None)
+                            servers=labels)
         if not rows:
             return {'success': True, 'search_key': needle, 'call_count': 0,
                     'calls': [], 'errors': self.errors or None}
@@ -709,6 +726,7 @@ class ArsLogFetcher:
 
         Returns:
             {'success', 'pattern', 'result_count', 'results':[{line,server,type,file,timestamp}], 'errors'}
+            timestamp 은 표시용 'YYYY-MM-DD HH:MM:SS' (접두부 없으면 HH:MM:SS).
         """
         try:
             rx = re.compile(pattern)
@@ -756,7 +774,7 @@ class ArsLogFetcher:
                                 'server': label,
                                 'type': 'ARS',
                                 'file': fname,
-                                'timestamp': _time_of(line),
+                                'timestamp': _datetime_of(line),
                             })
                     del data  # 다음 파일 전에 해제
         finally:

@@ -74,6 +74,35 @@ def api_fresh():
         return jsonify({"error": str(e)}), 500
 
 
+@deploy_bp.route("/api/deploy/config", methods=["GET"])
+def api_config_get():
+    """시나리오 경로/접속 설정 조회 (웹에서 편집 가능하도록)."""
+    try:
+        cfg = DEP.load_cfg()
+        return jsonify({"ok": True, "config": cfg,
+                        "remote": {"new": DEP._remote_dir(cfg, "new"),
+                                   "old": DEP._remote_dir(cfg, "old")}})
+    except Exception as e:
+        logger.exception("배포 설정 조회 오류")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@deploy_bp.route("/api/deploy/config", methods=["POST"])
+def api_config_post():
+    """시나리오 경로/접속 설정 저장."""
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        ok, cfg, err = DEP.save_cfg(data)
+        if not ok:
+            return jsonify({"ok": False, "error": err, "config": cfg}), 400
+        return jsonify({"ok": True, "config": cfg,
+                        "remote": {"new": DEP._remote_dir(cfg, "new"),
+                                   "old": DEP._remote_dir(cfg, "old")}})
+    except Exception as e:
+        logger.exception("배포 설정 저장 오류")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @deploy_bp.route("/api/deploy/status")
 def api_status():
     try:
