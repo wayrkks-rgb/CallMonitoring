@@ -34,6 +34,11 @@ def main():
     ap.add_argument("--cust-id", default=None)
     ap.add_argument("--unseal", action="store_true",
                     help="오늘자 파일의 확정(sealed) 플래그 해제")
+    ap.add_argument("--reset-failed", action="store_true",
+                    help="0바이트만 읽고 확정된 파일의 상태 초기화 "
+                         "(접속 장애 중 '없는 파일'로 오인 확정된 구간 복구)")
+    ap.add_argument("--reset-all", action="store_true",
+                    help="scan_state 전체 초기화 — 재기동 시 전 구간 재색인")
     args = ap.parse_args()
 
     from config_manager import get_enabled_servers, get_log_paths, get_server_label
@@ -251,6 +256,29 @@ def main():
             print(f"  총 {n}건 해제 — 웹 서버를 재기동하면 다시 읽기 시작합니다.")
         else:
             print("  해제할 파일 없음 (오늘자 파일 중 확정된 것이 없습니다)")
+
+    # ── 6) 접속 장애로 잘못 확정된 구간 복구 ────────────────
+    if args.reset_failed or args.reset_all:
+        _hr("6. 색인 상태 초기화")
+        with store._lock:
+            if args.reset_all:
+                n = store._conn.execute("SELECT COUNT(*) FROM scan_state").fetchone()[0]
+                store._conn.execute("DELETE FROM scan_state")
+                store._conn.commit()
+                print(f"  scan_state 전체 {n}건 삭제")
+            else:
+                # 0바이트만 읽고 확정된 파일 = 존재 확인에 실패해 '없는 파일'로
+                # 오인 확정된 것. 실제로 비어 있던 파일도 섞일 수 있으나
+                # 다시 확인 후 재확정될 뿐이라 부작용이 없다.
+                cur = store._conn.execute(
+                    "SELECT COUNT(*) FROM scan_state WHERE sealed=1 AND last_offset=0")
+                n = cur.fetchone()[0]
+                store._conn.execute(
+                    "DELETE FROM scan_state WHERE sealed=1 AND last_offset=0")
+                store._conn.commit()
+                print(f"  0바이트 확정 상태 {n}건 삭제")
+        print("  → 웹 서버를 재기동하면 해당 구간을 다시 색인합니다.")
+        print("    (백필은 기동 시 1회 도는 구조라 재기동이 필요합니다)")
 
     _hr("판정 가이드")
     print("""  · 1번 '★ 색인 제외'        → 인바운드 경로 미등록. 서버 관리에서 등록

@@ -128,16 +128,33 @@ class ArsSshIO:
             return self._runner(cmd)   # timeout 인자를 받지 않는 주입 runner 호환
 
     # ── 원시연산 ───────────────────────────────────────────
-    def file_size(self, server, path):
-        """파일 크기(byte). 없거나 오류면 None."""
-        script = f"$ErrorActionPreference='Stop'; (Get-Item -LiteralPath '{path}').Length"
+    def stat(self, server, path):
+        """
+        (size, status) 반환. status: 'ok' | 'nofile' | 'error'
+
+        '파일 없음'과 '접속/실행 실패'를 반드시 구분해야 한다. 둘을 같이 None 으로
+        뭉개면 인증이 끊긴 동안 멀쩡한 파일이 '없는 파일'로 확정(sealed)되어
+        인증을 복구해도 영영 색인되지 않는다.
+        """
+        script = ("$ErrorActionPreference='SilentlyContinue';"
+                  f"if(Test-Path -LiteralPath '{path}')"
+                  f"{{(Get-Item -LiteralPath '{path}').Length}}else{{'NOFILE'}}")
         rc, out, err = self._run_ps(server, script)
         if rc != 0:
-            return None
-        try:
-            return int(out.decode('ascii', 'ignore').strip())
-        except (ValueError, TypeError):
-            return None
+            logger.warning("파일 확인 실패(접속/실행 오류) %s: rc=%s %s",
+                           path, rc, (err or '').strip()[:160])
+            return None, 'error'
+        txt = out.decode('ascii', 'ignore').strip()
+        if txt == 'NOFILE':
+            return None, 'nofile'
+        if txt.isdigit():
+            return int(txt), 'ok'
+        return None, 'error'
+
+    def file_size(self, server, path):
+        """파일 크기(byte). 없거나 오류면 None. (구분이 필요하면 stat() 사용)"""
+        size, _status = self.stat(server, path)
+        return size
 
     def read_range(self, server, path, offset, length):
         """[offset, offset+length) 바이트를 읽어 bytes 반환. 없거나 오류면 None.
