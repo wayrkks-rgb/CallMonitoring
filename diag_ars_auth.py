@@ -71,10 +71,34 @@ def check_key(server):
     print(f"  공개키({pub.name}) 존재 : {pub.exists()}")
     if pub.exists():
         try:
-            print(f"    {pub.read_text(errors='ignore').strip()[:100]}...")
+            line = pub.read_text(errors="ignore").strip()
+            print(f"    {line[:90]}...")
+            fp = _fingerprint(line)
+            if fp:
+                print(f"  ★ 지문 : {fp}")
+                print("    → 서버의 authorized_keys 에 '이 지문'이 있는지 대조하세요.")
         except OSError:
             pass
+    else:
+        print("    (.pub 이 없으면 지문 대조를 못 합니다 — 서버 등록 여부 확인 필요)")
     return str(p)
+
+
+def _fingerprint(pubkey_line):
+    """'ssh-rsa AAAA... comment' → 'SHA256:xxxx' (ssh-keygen -lf 와 동일 형식)."""
+    import base64
+    import hashlib
+    parts = (pubkey_line or "").split()
+    blob = next((s for s in parts if len(s) > 40 and s.startswith("AAAA")), None)
+    if not blob:
+        return None
+    try:
+        raw = base64.b64decode(blob)
+    except Exception:
+        return None
+    digest = base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
+    keytype = parts[0] if parts else "?"
+    return f"SHA256:{digest}   (형식 {keytype})"
 
 
 def probe(server, key_path, raw=False):
