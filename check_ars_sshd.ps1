@@ -13,10 +13,17 @@
   Usage (admin PowerShell on the ARS server):
       powershell -ExecutionPolicy Bypass -File check_ars_sshd.ps1 -User ivradmin
       powershell -ExecutionPolicy Bypass -File check_ars_sshd.ps1 -User ivradmin -EnableLog
+
+  To register a public key (contents of the .pub file from the app server):
+      powershell -ExecutionPolicy Bypass -File check_ars_sshd.ps1 -User ivradmin ^
+          -AddKey "ssh-ed25519 AAAAC3Nz... log-analyzer@ARS01"
 #>
 param(
     [Parameter(Mandatory = $true)][string]$User,
-    [switch]$EnableLog
+    [switch]$EnableLog,
+    # Register a public key into the file sshd actually reads, with the
+    # correct ACL. Pass the FULL one-line contents of the .pub file.
+    [string]$AddKey
 )
 
 $ErrorActionPreference = 'Continue'
@@ -134,6 +141,50 @@ foreach ($f in @($adminKeys, $userKeys)) {
     }
 }
 
+# ---------------------------------------------------------------- 4b
+if ($AddKey) {
+    Head "4b. Register public key into the file sshd reads"
+    $line = $AddKey.Trim()
+    if ($line -notmatch '^(ssh-rsa|ssh-ed25519|ecdsa-sha2-\S+)\s+\S+') {
+        Write-Host "  [X] Not a valid public key line."
+        Write-Host "      Expected: ssh-ed25519 AAAA... comment"
+        Write-Host "      (Use the .pub file contents, NOT the private key)"
+    }
+    else {
+        $dir = Split-Path $target
+        if (-not (Test-Path $dir)) {
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            Write-Host ("  created dir : " + $dir)
+        }
+        $existing = @()
+        if (Test-Path $target) {
+            foreach ($l in (Get-Content $target)) {
+                $t = $l.Trim()
+                if ($t) { $existing += $t }
+            }
+        }
+        if ($existing -contains $line) {
+            Write-Host "  key already present, not duplicated"
+        }
+        else {
+            $existing += $line
+        }
+        # ASCII, no BOM - sshd will not parse a BOM'd file
+        Set-Content -Path $target -Value $existing -Encoding ascii
+        Write-Host ("  wrote       : " + $target + "  (" + $existing.Count + " keys)")
+
+        if ($isAdmin) {
+            & icacls $target /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F" | Out-Null
+            Write-Host "  ACL set     : Administrators:F, SYSTEM:F, inheritance off"
+        }
+        else {
+            & icacls $target /inheritance:r /grant ($User + ":F") /grant "SYSTEM:F" | Out-Null
+            Write-Host ("  ACL set     : " + $User + ":F, SYSTEM:F, inheritance off")
+        }
+        Write-Host "  -> now retry the connection from the app server"
+    }
+}
+
 # ---------------------------------------------------------------- 5
 if (Test-Path $target) {
     Head "5. Fingerprints of registered keys"
@@ -229,4 +280,7 @@ Write-Host "                                 (adding the account to Administrato
 Write-Host "                                  makes ~\.ssh\authorized_keys ignored)"
 Write-Host ""
 Write-Host "  All of the above look fine? Re-run with -EnableLog and read sshd.log."
+Write-Host ""
+Write-Host "  Both files [MISSING]? No key is registered at all. Register it:"
+Write-Host "    check_ars_sshd.ps1 -User <user> -AddKey \"<contents of .pub>\""
 Write-Host ""
