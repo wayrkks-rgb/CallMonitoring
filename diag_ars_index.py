@@ -13,6 +13,7 @@ diag_ars_index.py — "ARS 인바운드 오늘자 로그가 안 나온다" 원�
     python diag_ars_index.py --hours 6 --reset-partial
                                               # 부분만 읽고 확정된 파일 이어읽기
     python diag_ars_index.py --reset-days 2   # 최근 2일 재색인
+    python diag_ars_index.py --sample         # 콜 0건인 서버의 로그 형식 대조
 """
 import os
 import sys
@@ -47,6 +48,9 @@ def main():
                          "(읽은 위치는 유지 — 나머지 구간만 이어서 색인)")
     ap.add_argument("--reset-days", type=int, default=None, metavar="N",
                     help="최근 N일치 scan_state 를 모두 초기화 — 재기동 시 그 구간 재색인")
+    ap.add_argument("--sample", action="store_true",
+                    help="로그를 읽었는데 콜이 0건인 서버의 실제 로그를 떠서 "
+                         "콜 경계 패턴이 맞는지 대조 (원인 확정용)")
     args = ap.parse_args()
 
     from config_manager import get_enabled_servers, get_log_paths, get_server_label
@@ -255,6 +259,70 @@ def main():
             print("  ★ 전체기간엔 있는데 오늘만 없음 → 색인 지연/중단 쪽을 보세요")
             print(f"    가장 최근 콜: {allres[-1]['start_time']}")
 
+    # ── 4-1) 콜 경계 패턴 대조 ─────────────────────────────
+    # '읽긴 읽었는데 콜이 0건' 인 서버의 진짜 원인은 대부분 여기다.
+    # scan_state 의 last_offset 이 전진했다 = 바이트는 가져왔다는 뜻이므로,
+    # 남은 가능성은 상태머신이 콜 시작/종료를 못 알아본 것뿐이다.
+    if args.sample:
+        _hr("4-1. 실제 로그 vs 콜 경계 패턴")
+        from ars_fetcher import (RE_CHANNEL, RE_START, RE_END_EVENT,
+                                 RE_WAITOK, RE_CUSTID, RE_PHONE)
+        checks = [
+            ("채널       RE_CHANNEL", RE_CHANNEL, "이게 0이면 콜에 라인이 안 붙는다"),
+            ("콜 시작    RE_START", RE_START, "이게 0이면 콜이 아예 안 열린다 ★"),
+            ("콜 종료    RE_WAITOK", RE_WAITOK, "이게 0이면 콜이 안 닫혀 색인 0건 ★"),
+            ("종료(보조) RE_END_EVENT", RE_END_EVENT, ""),
+            ("고객ID     RE_CUSTID", RE_CUSTID, "0이어도 색인은 되지만 검색이 안 된다"),
+            ("전화번호   RE_PHONE", RE_PHONE, "0이면 번호 검색이 안 된다"),
+        ]
+        SAMPLE_BYTES = 512 * 1024
+
+        for idx, srv in targets:
+            label = get_server_label(srv)
+            if label in indexed and any(r["server"] == label and r["n"] for r in per):
+                continue        # 이미 콜이 색인된 서버는 건너뜀
+            print(f"\n  [{idx}] {label}")
+            is_ssh = (srv.get("access_method") or "unc") == "ssh"
+            blob = None
+            used = None
+            for tmpl in get_log_paths(srv, "inbound"):
+                for k in range(max(args.hours, 1)):
+                    t = now - timedelta(hours=k)
+                    path = (ArsLogFetcher._expand(tmpl, t.strftime("%Y-%m-%d"), t.hour)
+                            if "{HH}" in tmpl else ArsLogFetcher._expand(tmpl, today))
+                    if is_ssh:
+                        from ars_ssh_fetcher import ArsSshIO
+                        blob = ArsSshIO().read_range(srv, path, 0, SAMPLE_BYTES)
+                    else:
+                        try:
+                            with open(path, "rb") as f:
+                                blob = f.read(SAMPLE_BYTES)
+                        except OSError:
+                            blob = None
+                    if blob:
+                        used = path
+                        break
+                    if "{HH}" not in tmpl:
+                        break
+                if blob:
+                    break
+
+            if not blob:
+                print("      샘플을 읽지 못했습니다 (2번의 '사유=' 를 보세요)")
+                continue
+
+            from ars_indexer import _detect_encoding
+            text = blob.decode(_detect_encoding(blob[:65536]), errors="replace")
+            lines = text.splitlines()
+            print(f"      샘플 {os.path.basename(used)} — {len(blob):,}바이트 / {len(lines):,}줄")
+            for name, rx, note in checks:
+                hits = sum(1 for l in lines if rx.search(l))
+                mark = "" if hits else f"   ★ 0건 — {note}" if note else "   0건"
+                print(f"      {name:<24} {hits:>6,}{mark}")
+            print("      ── 로그 앞 3줄 (형식 확인용) ──")
+            for l in lines[:3]:
+                print(f"        {l[:150]}")
+
     # ── 5) 복구 ────────────────────────────────────────────
     if args.unseal:
         _hr("5. 오늘자 파일 확정 해제")
@@ -334,7 +402,9 @@ def main():
   · 2번 '부분만 읽고 확정됨' → --reset-partial 후 재기동 (나머지만 이어 읽음)
   · 2번 오늘 파일이 sealed   → --unseal 후 재기동
   · 2번 '뒤처짐'이 계속 커짐 → 인덱서 스레드 정지/오류 (logs/app.log 확인)
-  · 2번 정상인데 3번이 0건   → 콜 경계 미검출 (call_start/WaitCall 패턴 불일치)
+  · 2번 정상인데 3번이 0건   → 바이트는 읽었고 콜 경계만 못 잡은 것.
+                               --sample 로 어느 패턴이 0건인지 확인하세요
+                               (느려서 아직 안 나온 게 아닙니다)
   · 3번에 콜이 있는데 화면 X → 검색 조건(서버 선택/날짜) 또는 조회 경로 문제
 
   ※ 서버마다 되고 안 되는 경우, 1번에서 되는 서버와 안 되는 서버의
