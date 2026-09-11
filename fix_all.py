@@ -22,6 +22,7 @@ paramiko 불필요 (표준 ssh / ssh-keygen 만 사용).
     python fix_all.py --check-only     # 조치 없이 점검만
     python fix_all.py --no-index-reset # 색인 초기화는 건너뜀
     python fix_all.py -s 2             # 특정 서버만
+    python fix_all.py --all-ssh        # ARS 를 전부 OpenSSH 방식으로 전환 후 진행
 """
 import os
 import sys
@@ -310,6 +311,90 @@ def check_logs_aicc(srv, pattern):
     return found, len(pats), hits, note
 
 
+# ── UNC → SSH 전환 ────────────────────────────────────────
+def unc_to_local(path):
+    r"""
+    UNC 경로를 그 서버의 로컬 경로로 변환.
+      \\ARS01\D$\ARSLOG\a.log  → D:\ARSLOG\a.log     (관리공유는 드라이브 추론 가능)
+      \\ARS01\ARSLOG\a.log     → None                (일반 공유는 실제 위치를 알 수 없음)
+    UNC 가 아니면 그대로 반환.
+    """
+    if not path:
+        return path
+    s = path.strip().replace("/", "\\")
+    if not s.startswith("\\\\"):
+        return s                       # 이미 로컬 경로
+    parts = [p for p in s.lstrip("\\").split("\\") if p]
+    if len(parts) < 2:
+        return None
+    share = parts[1]
+    rest = "\\".join(parts[2:])
+    if len(share) == 2 and share[1] == "$" and share[0].isalpha():
+        return f"{share[0].upper()}:\\{rest}"
+    return None                        # 일반 공유 → 수동 입력 필요
+
+
+def switch_ars_to_ssh(cfg):
+    """
+    모든 ARS 서버를 SSH 방식으로 전환. (변경됨, 수동확인목록) 반환.
+
+    SSH 모드는 UNC 와 요구사항이 다르다.
+      · log_paths 가 '\\host\share\...' 가 아니라 그 서버의 '로컬 경로'여야 한다
+      · 접속 정보(hostname/ip, user, ssh_port)가 필요하다
+    자동으로 확정할 수 없는 항목은 바꾸지 않고 목록으로 알려준다.
+    """
+    from ars_fetcher import extract_host
+    from config_manager import normalize_log_paths
+
+    changed = False
+    todo = []
+    for i, srv in enumerate(cfg.get("remote_servers", [])):
+        if (srv.get("type") or "AICC").upper() != "ARS":
+            continue
+        label = srv.get("label") or srv.get("hostname") or srv.get("ip") or f"[{i}]"
+
+        if (srv.get("access_method") or "unc") != "ssh":
+            srv["access_method"] = "ssh"
+            changed = True
+            print(f"  [{i}] {label} : access_method unc → ssh")
+
+        lp = normalize_log_paths(srv.get("log_paths"))
+        # 접속 대상이 없으면 UNC 경로의 호스트에서 채운다
+        if not srv.get("hostname") and not srv.get("ip"):
+            host = next((extract_host(p) for p in (lp["inbound"] + lp["outbound"])
+                         if extract_host(p)), None)
+            if host:
+                srv["hostname"] = host
+                changed = True
+                print(f"       접속 대상 보강 : hostname = {host}")
+            else:
+                todo.append(f"[{i}] {label} : hostname/ip 미지정 → 서버 관리에서 입력")
+
+        if not srv.get("user"):
+            todo.append(f"[{i}] {label} : SSH 계정(user) 미지정 → 서버 관리에서 입력")
+
+        # 로그 경로를 로컬 경로로 변환
+        for purpose in ("inbound", "outbound"):
+            out = []
+            for p in lp[purpose]:
+                conv = unc_to_local(p)
+                if conv is None:
+                    out.append(p)
+                    todo.append(f"[{i}] {label} : UNC 경로를 로컬 경로로 바꿔야 합니다\n"
+                                f"            {p}\n"
+                                f"            → 예) D:\\ARSLOG\\... (서버에서 실제 위치 확인)")
+                else:
+                    if conv != p:
+                        changed = True
+                        print(f"       경로 변환({purpose}) : {p}\n"
+                              f"                        → {conv}")
+                    out.append(conv)
+            lp[purpose] = out
+        srv["log_paths"] = lp
+
+    return changed, todo
+
+
 # ── 메인 ──────────────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser()
@@ -317,6 +402,9 @@ def main():
     ap.add_argument("-p", "--pattern", default="custId", help="AICC 테스트 패턴")
     ap.add_argument("--check-only", action="store_true", help="조치 없이 점검만")
     ap.add_argument("--no-index-reset", action="store_true")
+    ap.add_argument("--all-ssh", action="store_true",
+                    help="모든 ARS 서버를 OpenSSH 방식으로 전환한 뒤 진행 "
+                         "(access_method=ssh, UNC 경로→로컬 경로)")
     ap.add_argument("--report", default=None, help="리포트 파일 경로")
     args = ap.parse_args()
 
@@ -371,6 +459,23 @@ def _main(args, report):
     if not cfg:
         print("\n★ config.json 을 읽을 수 없습니다. 중단합니다.")
         return
+    if args.all_ssh:
+        hr("0-1. ARS 서버를 OpenSSH 방식으로 전환")
+        sw_changed, todo = switch_ars_to_ssh(cfg)
+        if sw_changed and not args.check_only:
+            save_config(cfg)
+            print("  config.json 저장 완료 (기존 파일은 자동 백업됩니다)")
+        elif sw_changed:
+            print("  (--check-only 이므로 저장하지 않았습니다)")
+        else:
+            print("  이미 전부 SSH 방식입니다")
+        if todo:
+            print("\n  ★ 수동 확인이 필요한 항목:")
+            for t in todo:
+                print(f"    - {t}")
+            print("\n  위 항목은 자동으로 정할 수 없습니다. 서버 관리 화면에서")
+            print("  채운 뒤 다시 실행하세요. (그 서버는 이번 실행에서 실패로 나옵니다)")
+
     servers = cfg.get("remote_servers", [])
     idxs = [args.server] if args.server is not None else range(len(servers))
 
