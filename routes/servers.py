@@ -94,8 +94,9 @@ def add_server():
             'enabled': True,
             'log_paths': validated['log_paths'],  # 정규화된 dict
         }
-        # AICC 전용: SSH 접속 정보
-        if server_type == 'AICC':
+        # SSH 접속 정보 — AICC 는 항상, ARS 는 access_method=ssh 일 때 필요.
+        # (ARS-SSH 에 키 경로를 안 넣으면 등록 직후 인증이 안 돼 로그를 못 읽는다)
+        if server_type == 'AICC' or new_server['access_method'] == 'ssh':
             new_server['user'] = validated.get('user', 'loguser')
             new_server['ssh_port'] = validated.get('ssh_port', 22)
             new_server['ssh_key_path'] = validated.get('ssh_key_path')
@@ -473,12 +474,17 @@ def register_server_key():
         client.close()
         logger.info(f"SSH 키 등록 완료: {user}@{ip} (windows={is_windows})")
 
-        # ── config.json 의 해당 서버에 ssh_key_path 자동 저장
+        # ── 이미 등록된 서버라면 ssh_key_path 를 갱신한다.
+        # 없으면 '여기서 서버를 만들지 않는다'. 예전에는 없는 경우 서버를 새로
+        # 끼워 넣었는데, 그러면 운영구분·라벨 같은 입력값이 빠진 껍데기 항목이
+        # 생기고, 사용자가 [추가] 를 누르면 그 껍데기와 '중복'으로 막혔다.
+        # 서버 생성은 [추가] 한 곳에서만 한다. 키 경로는 응답으로 돌려주고
+        # 화면이 추가 요청에 실어 보낸다.
         srv_type = 'ARS' if is_windows else 'AICC'
+        linked = False
         config = load_config()
         if config:
             servers = config.get('remote_servers', [])
-            found = False
             for server in servers:
                 if (server.get('ip') == ip) or (server.get('hostname') == label and label != ip):
                     server['type'] = srv_type
@@ -486,32 +492,20 @@ def register_server_key():
                         server['access_method'] = 'ssh'   # ARS-SSH 확정
                     server['ssh_key_path'] = str(private_key_path)
                     server['log_paths'] = normalize_log_paths(server.get('log_paths'))
-                    found = True
+                    linked = True
                     logger.info(f"기존 서버에 ssh_key_path 업데이트: {ip}")
                     break
+            if linked:
+                save_config(config)
 
-            if not found:
-                new_server = {
-                    'type': srv_type,
-                    'access_method': 'ssh' if is_windows else 'unc',
-                    'label': '',
-                    'hostname': label if label != ip else '',
-                    'ip': ip,
-                    'user': user,
-                    'ssh_port': port,
-                    'ssh_key_path': str(private_key_path),
-                    'enabled': True,
-                    'log_paths': {'inbound': [], 'outbound': []}
-                }
-                servers.append(new_server)
-                config['remote_servers'] = servers
-                logger.info(f"config.json 에 서버 신규 추가: {ip}")
-
-            save_config(config)
+        msg = 'SSH 키 등록 완료. 이후 패스워드 없이 접속됩니다.'
+        if not linked:
+            msg += ' 이어서 [추가] 를 눌러 서버를 등록하세요.'
 
         return jsonify({
             'success': True,
-            'message': 'SSH 키 등록 완료. 이후 패스워드 없이 접속됩니다.',
+            'message': msg,
+            'linked': linked,          # True 면 기존 서버에 키가 연결됨
             'key_path': str(private_key_path)
         })
 

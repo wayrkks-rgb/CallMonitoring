@@ -2021,6 +2021,10 @@
         // =====================================================================
         // SSH 키 자동 등록
         // =====================================================================
+
+        // 직전 키 등록으로 만들어진 개인키 경로. [추가] 할 때 payload 에 실린다.
+        let _pendingKeyPath = '';
+
         async function registerSshKey() {
             const ip       = document.getElementById('newIp').value.trim();
             const hostname = document.getElementById('newHostname').value.trim();
@@ -2051,6 +2055,9 @@
                     statusEl.className = 'key-status success';
                     statusEl.textContent = '✅ ' + data.message;
                     document.getElementById('newPassword').value = '';
+                    // 키 등록은 서버를 만들지 않는다. 여기서 받은 키 경로를 들고
+                    // 있다가 [추가] 요청에 함께 보내야 등록과 동시에 접속된다.
+                    _pendingKeyPath = data.key_path || '';
                 } else {
                     statusEl.className = 'key-status error';
                     statusEl.textContent = '❌ ' + (data.error || '키 등록 실패');
@@ -2123,6 +2130,7 @@
             document.getElementById('addServerModal').style.display = 'block';
             document.getElementById('keyRegStatus').className = 'key-status';
             document.getElementById('keyRegStatus').textContent = '';
+            _pendingKeyPath = '';   // 앞서 등록한 다른 서버의 키가 따라붙지 않게
             document.getElementById('newType').value = 'AICC';
             document.getElementById('newEnv').value = '';
             document.getElementById('newAccessMethod').value = 'unc';
@@ -2263,11 +2271,13 @@
                     payload.hostname = hostname || '';
                     payload.user = user || 'loguser';
                     payload.ssh_port = parseInt(port) || 22;
+                    if (_pendingKeyPath) payload.ssh_key_path = _pendingKeyPath;
                 }
             } else {
                 payload.hostname = hostname || '';
                 payload.user = user || 'loguser';
                 payload.ssh_port = parseInt(port) || 22;
+                if (_pendingKeyPath) payload.ssh_key_path = _pendingKeyPath;
             }
 
             const post = async (body) => {
