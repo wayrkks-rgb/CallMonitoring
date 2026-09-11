@@ -31,6 +31,7 @@ ARS 로그 접근 — SSH(Windows OpenSSH) 대체 경로  [UNC 대비책 / 장�
 
 import base64
 import os
+import re
 import logging
 import subprocess
 from pathlib import Path
@@ -44,6 +45,15 @@ logger = logging.getLogger(__name__)
 # Windows 경로는 'D:\...' 처럼 콜론을 포함하므로 ':' 로는 자를 수 없고,
 # 로그 본문에도 나타나지 않을 조합이어야 한다.
 GREP_FILE_SEP = '|#|'
+
+
+class ArsReadError(Exception):
+    """원격 읽기가 EOF 전에 끊겼다.
+
+    '읽은 데이터는 유효하지만 끝까지 가지 못했다'는 뜻이다. 이걸 조용히
+    무시하면 색인기가 부분만 읽고도 파일을 확정(sealed)해 버려서, 그 파일의
+    나머지 구간이 영영 색인되지 않는다.
+    """
 
 
 # ── SSH/PowerShell 원시연산 ────────────────────────────────
@@ -150,11 +160,15 @@ class ArsSshIO:
             logger.warning("파일 확인 실패(접속/실행 오류) %s: rc=%s %s",
                            path, rc, (err or '').strip()[:160])
             return None, 'error'
-        txt = out.decode('ascii', 'ignore').strip()
+        # 접속 배너/경고가 stdout 에 섞여 들어오는 서버가 있다. 통째로 비교하면
+        # 멀쩡한 응답이 'error' 로 뭉개지므로 마지막 유효 줄만 본다.
+        lines = [l.strip() for l in out.decode('ascii', 'ignore').splitlines() if l.strip()]
+        txt = lines[-1] if lines else ''
         if txt == 'NOFILE':
             return None, 'nofile'
         if txt.isdigit():
             return int(txt), 'ok'
+        logger.warning("파일 크기 응답 해석 실패 %s: %r", path, txt[:120])
         return None, 'error'
 
     def file_size(self, server, path):
@@ -199,18 +213,25 @@ class ArsSshIO:
         남은 구간을 한 번에 요청하면 대용량 시간대에서 타임아웃이 나고,
         그 뒤로는 매 폴링마다 같은(더 커진) 구간을 재시도하다 실패해
         해당 파일의 색인이 영구히 멈춘다. 청크로 끊어 진행분을 확정한다.
+
+        end 까지 가지 못하면 ArsReadError 를 올린다. 여기서 조용히 return 하면
+        호출측은 '정상적으로 EOF 까지 읽었다'고 오해하고 파일을 확정해 버린다.
+        (실제로 그렇게 부분만 읽고 sealed=1 이 된 파일들이 생겼다)
         """
         pos = int(offset or 0)
         end = int(end or 0)
         while pos < end:
             want = min(self.READ_CHUNK, end - pos)
             data = self.read_range(server, path, pos, want)
+            if data is None:
+                raise ArsReadError(f'읽기 실패 offset={pos} len={want}')
             if not data:
-                return          # 실패/EOF → 여기까지만 반영 (다음 폴링에서 이어감)
+                raise ArsReadError(f'응답 0바이트 offset={pos} (EOF 이전)')
             yield pos, data
             pos += len(data)
             if len(data) < want:
-                return          # 짧게 읽힘 → 이번 회차는 여기까지
+                # 파일이 그 사이 줄었거나 읽기가 잘렸다 — 어느 쪽이든 end 미도달
+                raise ArsReadError(f'짧게 읽힘 offset={pos} ({len(data)}/{want})')
 
     def read_all(self, server, path):
         """파일 전체 bytes (없으면 None). 대용량엔 grep 을 우선 사용할 것."""
@@ -332,7 +353,6 @@ class ArsSshLogFetcher(ArsLogFetcher):
     # ── 패턴 검색 (서버측 Select-String) ───────────────────
     def search_by_pattern(self, pattern):
         try:
-            import re
             re.compile(pattern)
         except re.error as e:
             return {'success': False, 'message': f'잘못된 정규식: {str(e)}', 'results': []}
@@ -401,8 +421,7 @@ class ArsSshLogFetcher(ArsLogFetcher):
             server = label_map.get(r.get('server'))
             if not server:
                 continue
-            lines = self._read_call_lines_ssh(
-                server, r['file_path'], r['start_offset'], r['end_offset'], r['channel'])
+            lines = self._read_call_lines_ssh(server, r)
             st = (r.get('start_time') or '')
             et = (r.get('end_time') or '')
             calls.append({
@@ -419,18 +438,54 @@ class ArsSshLogFetcher(ArsLogFetcher):
         return {'success': True, 'search_key': needle, 'call_count': len(calls),
                 'calls': calls, 'errors': self.errors or None}
 
-    def _read_call_lines_ssh(self, server, path, start_offset, end_offset, channel):
-        """SSH 오프셋 읽기로 콜 구간만 회수 → 해당 채널 라인만."""
-        length = (end_offset or 0) - (start_offset or 0)
-        blob = self.io.read_range(server, path, start_offset or 0, length)
-        if not blob:
-            if blob is None:
-                self.errors.append({'error': 'ARS(SSH) 원본 읽기 오류',
-                                    'details': f'{path} (원본 정리 가능성)'})
-            return []
-        enc = self._detect_encoding_bytes(blob)
-        text = blob.decode(enc, errors='replace')
-        return [l for l in text.splitlines(keepends=True) if _channel_of(l) == channel]
+    def _read_call_lines_ssh(self, server, row):
+        """SSH 오프셋 읽기로 콜 구간만 회수 → 해당 채널 라인만.
+
+        오프셋 읽기가 실패하면(원본 교체·로테이션·권한 등) 목록만 뜨고 본문이
+        비어 버린다. 그때는 사유를 남기고 UCID 로 직접 검색해 복구를 시도한다.
+        """
+        path = row.get('file_path') or ''
+        start_offset = row.get('start_offset') or 0
+        end_offset = row.get('end_offset') or 0
+        channel = row.get('channel')
+        ucid = row.get('ucid') or ''
+        length = end_offset - start_offset
+
+        blob = self.io.read_range(server, path, start_offset, length) if length > 0 else b''
+        if blob:
+            enc = self._detect_encoding_bytes(blob)
+            lines = [l for l in blob.decode(enc, errors='replace').splitlines(keepends=True)
+                     if _channel_of(l) == channel]
+            if lines:
+                return lines
+
+        # ── 여기부터 복구 경로 ──
+        size, status = self.io.stat(server, path)
+        if status == 'error':
+            reason = '원본 서버 접속/권한 오류'
+        elif status == 'nofile':
+            reason = '원본 파일이 없음(보관주기 경과 또는 이동)'
+        elif size is not None and size < end_offset:
+            reason = f'원본이 교체·축소됨 (현재 {size:,}바이트 < 색인 위치 {end_offset:,})'
+        elif blob:
+            reason = f'구간은 읽혔으나 채널 {channel} 라인이 없음'
+        else:
+            reason = '구간 읽기 실패'
+
+        recovered = []
+        if ucid and status == 'ok':
+            # 오프셋이 틀어졌어도 UCID 로는 찾을 수 있다 (콜 전체는 아니지만
+            # 빈 화면보다는 낫다)
+            found, _err = self.io.grep(server, [path], re.escape(ucid), regex=True)
+            recovered = [l + '\n' for l in found]
+
+        self.errors.append({
+            'server': row.get('server'),
+            'error': 'ARS(SSH) 원본 읽기 실패',
+            'details': f'{os.path.basename(path)} — {reason}'
+                       + (f' · UCID 검색으로 {len(recovered)}줄 복구' if recovered else ''),
+        })
+        return recovered
 
 
 # ── 부모의 UNC 연결관리자 자리채움 (SSH 모드는 연결관리 불필요) ──
@@ -447,7 +502,6 @@ class _NoopConn:
 
 def _time_of_safe(line):
     """라인에서 표시용 'YYYY-MM-DD HH:MM:SS' 추출 (날짜 접두부 없으면 HH:MM:SS, 실패 시 '')."""
-    import re
     s = line or ''
     m = re.search(r'\b(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\b', s)
     if m:

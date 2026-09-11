@@ -55,7 +55,12 @@ def get_servers():
                 'log_paths': normalize_log_paths(server.get('log_paths')),
             })
 
-        return jsonify({'success': True, 'servers': server_list})
+        resp = jsonify({'success': True, 'servers': server_list})
+        # 삭제/추가 직후 목록이 옛 상태로 보이면 '지웠는데 중복'처럼 보인다.
+        # 프록시/브라우저가 이 응답을 재사용하지 못하게 막는다.
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+        resp.headers['Pragma'] = 'no-cache'
+        return resp
 
     except Exception as e:
         logger.exception(f"서버 목록 조회 오류: {e}")
@@ -96,14 +101,50 @@ def add_server():
             new_server['ssh_key_path'] = validated.get('ssh_key_path')
 
         # 중복 검사 (hostname / ip / label)
+        # 어느 항목과 부딪혔는지 알려주지 않으면 사용자가 목록에서 그 서버를
+        # 찾지 못해 '지웠는데도 계속 중복'으로 보인다. 키 등록(register-key)이
+        # 서버를 먼저 만들어 두는 경로도 있어 실제로 자주 발생한다.
         servers = config.get('remote_servers', [])
-        for server in servers:
+        conflict = None
+        for i, server in enumerate(servers):
             if new_server['hostname'] and server.get('hostname') == new_server['hostname']:
-                return jsonify({'success': False, 'error': f'중복 호스트명: {new_server["hostname"]}'})
-            if new_server['ip'] and server.get('ip') == new_server['ip']:
-                return jsonify({'success': False, 'error': f'중복 IP: {new_server["ip"]}'})
-            if new_server['label'] and server.get('label') == new_server['label']:
-                return jsonify({'success': False, 'error': f'중복 라벨: {new_server["label"]}'})
+                conflict = (i, server, f'호스트명 {new_server["hostname"]}')
+            elif new_server['ip'] and server.get('ip') == new_server['ip']:
+                conflict = (i, server, f'IP {new_server["ip"]}')
+            elif new_server['label'] and server.get('label') == new_server['label']:
+                conflict = (i, server, f'라벨 {new_server["label"]}')
+            if conflict:
+                break
+
+        if conflict:
+            i, old, what = conflict
+            if not data.get('overwrite'):
+                return jsonify({
+                    'success': False,
+                    'error': f'이미 등록된 서버입니다 — {what} 가 '
+                             f'[{i}] {get_server_label(old)} 와 같습니다',
+                    'duplicate': {
+                        'id': i,
+                        'display_name': get_server_label(old),
+                        'type': old.get('type', 'AICC'),
+                        'hostname': old.get('hostname', ''),
+                        'ip': old.get('ip', ''),
+                        'field': what,
+                    },
+                })
+            # 덮어쓰기: 기존 항목을 갱신한다. 로그 경로와 키 경로는 새로 입력한
+            # 값이 비어 있으면 기존 것을 살린다(경로를 통째로 날리지 않도록).
+            if not any(new_server['log_paths'].get(p) for p in PURPOSES):
+                new_server['log_paths'] = normalize_log_paths(old.get('log_paths'))
+            if server_type == 'AICC' and not new_server.get('ssh_key_path'):
+                new_server['ssh_key_path'] = old.get('ssh_key_path')
+            servers[i] = new_server
+            config['remote_servers'] = servers
+            if save_config(config):
+                logger.info(f"서버 덮어쓰기: [{server_type}] {get_server_label(new_server)}")
+                return jsonify({'success': True, 'message': '기존 등록을 갱신했습니다',
+                                'server': new_server})
+            return jsonify({'success': False, 'error': '설정 저장 실패'})
 
         servers.append(new_server)
         config['remote_servers'] = servers

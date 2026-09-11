@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from collections import deque
 
 from ars_fetcher import _ChannelStateMachine, ArsConnectionManager, extract_host, ArsLogFetcher
-from ars_ssh_fetcher import ArsSshIO
+from ars_ssh_fetcher import ArsSshIO, ArsReadError
 from config_manager import get_enabled_servers, get_log_paths, get_server_label
 
 logger = logging.getLogger(__name__)
@@ -244,10 +244,15 @@ class ArsIndexer:
         res = self._scan_file(server, path, label, file_date, start, seal)
         if res is None:
             return False
-        completed, pending, eof = res
+        completed, pending, eof, done = res
         n = self.store.upsert_calls(completed) if completed else 0
+        if seal and not done:
+            # 부분만 읽고 확정하면 나머지 구간이 영영 색인되지 않는다.
+            # 진행분(eof)만 저장하고 다음 회차에 이어서 읽는다.
+            logger.warning("확정 보류(끝까지 못 읽음): %s  진행=%s/%s",
+                           os.path.basename(path), eof, size)
         self.store.set_scan_state(path, last_offset=eof, pending_offset=pending,
-                                  sealed=1 if seal else 0)
+                                  sealed=1 if (seal and done) else 0)
         if n:
             logger.debug("인덱싱 %s: %d콜 (%s)", os.path.basename(path), n, label)
         return bool(n)
@@ -275,9 +280,15 @@ class ArsIndexer:
         return self._stat(server, path)[0]
 
     def _scan_file(self, server, path, label, file_date, start_offset, seal):
-        """[start_offset, EOF) 를 읽어 종료된 콜 추출. returns (calls, pending, eof) | None"""
+        """[start_offset, EOF) 를 읽어 종료된 콜 추출.
+
+        returns (calls, pending, eof, complete) | None
+          complete=False 면 EOF 까지 못 갔다는 뜻 — 호출측은 절대 확정(seal)하면
+          안 된다. 읽은 데이터 자체는 유효하므로 진행분은 그대로 반영한다.
+        """
         sm = _ChannelStateMachine(None)  # key 없음 → 전량
         offset = start_offset
+        complete = True
 
         if self._is_ssh(server):
             # SSH 모드: [start_offset, EOF) 를 청크로 끊어 읽는다.
@@ -289,23 +300,29 @@ class ArsIndexer:
             enc = None
             carry = b''          # 청크 경계에서 잘린 마지막 줄
             src = os.path.basename(path)
-            for _pos, chunk in self._ssh_io.read_chunks(server, path, start_offset, size):
-                if enc is None:
-                    enc = _detect_encoding(chunk[:65536])
-                buf = carry + chunk
-                nl = buf.rfind(b'\n')
-                if nl < 0:                    # 아직 개행이 없음 → 다음 청크로 이월
-                    carry = buf
-                    continue
-                body, carry = buf[:nl + 1], buf[nl + 1:]
-                for raw in body.splitlines(keepends=True):
-                    ls = offset
-                    offset += len(raw)
-                    sm.feed(raw.decode(enc, errors='replace'), source=src,
-                            start_offset=ls, end_offset=offset)
-            # 남은 꼬리(개행 없는 마지막 줄): 확정 파일이면 소비하고,
+            try:
+                for _pos, chunk in self._ssh_io.read_chunks(server, path,
+                                                            start_offset, size):
+                    if enc is None:
+                        enc = _detect_encoding(chunk[:65536])
+                    buf = carry + chunk
+                    nl = buf.rfind(b'\n')
+                    if nl < 0:                    # 아직 개행이 없음 → 다음 청크로 이월
+                        carry = buf
+                        continue
+                    body, carry = buf[:nl + 1], buf[nl + 1:]
+                    for raw in body.splitlines(keepends=True):
+                        ls = offset
+                        offset += len(raw)
+                        sm.feed(raw.decode(enc, errors='replace'), source=src,
+                                start_offset=ls, end_offset=offset)
+            except ArsReadError as e:
+                # 여기까지 읽은 건 유효하다 → 진행분은 살리고 확정만 막는다
+                complete = False
+                logger.warning("원격 읽기 중단 %s: %s", os.path.basename(path), e)
+            # 남은 꼬리(개행 없는 마지막 줄): 끝까지 읽은 확정 파일이면 소비하고,
             # 아직 쓰이는 중이면 offset 을 전진시키지 않아 다음 회차에 다시 읽는다.
-            if carry and seal:
+            if carry and seal and complete:
                 ls = offset
                 offset += len(carry)
                 sm.feed(carry.decode(enc or 'utf-8', errors='replace'), source=src,
@@ -331,8 +348,10 @@ class ArsIndexer:
                 return None
 
         eof = offset
-        if seal:
+        if seal and complete:
             sm.flush()  # 완료 파일: 남은 열린 콜 강제 마감
+            # (끝까지 못 읽었으면 flush 하면 안 된다 — 아직 이어질 콜이
+            #  '끝난 콜'로 박제돼 뒷부분이 통째로 사라진다)
 
         completed = sm.emitted
         # pending = 아직 열린 콜의 최소 시작 offset, 없으면 EOF
@@ -345,7 +364,7 @@ class ArsIndexer:
             c['file_path'] = path
             c['start_time'] = f"{file_date} {c['start_time']}" if c.get('start_time') else None
             c['end_time'] = f"{file_date} {c['end_time']}" if c.get('end_time') else None
-        return completed, pending, eof
+        return completed, pending, eof, complete
 
     # ── 백필 (과거 로그 최신순 1회) ───────────────────────
     def _init_backfill(self, now):
@@ -413,11 +432,20 @@ class ArsIndexer:
             self.store.set_scan_state(path, 0, 0, sealed=1)
             return True
 
-        res = self._scan_file(server, path, label, ds, 0, seal=True)
+        # 이전 시도가 중간에 끊겼으면 그 지점부터 이어 읽는다 (매번 0부터 다시
+        # 읽으면 큰 파일에서 같은 실패를 반복하며 영원히 진도가 안 나간다)
+        resume = (st.get('pending_offset') or 0) if st else 0
+        res = self._scan_file(server, path, label, ds, resume, seal=True)
         if res is None:      # 읽기 도중 실패 — 확정하지 않고 재시도
             return _retry()
-        completed, pending, eof = res
+        completed, pending, eof, done = res
         n = self.store.upsert_calls(completed) if completed else 0
+        if not done:
+            # 진행분만 저장하고 확정은 보류 — 다음 시도가 여기서 이어간다
+            self.store.set_scan_state(path, last_offset=eof, pending_offset=pending,
+                                      sealed=0)
+            logger.warning("백필 중단(확정 보류) %s: 진행=%s", os.path.basename(path), eof)
+            return _retry()
         self.store.set_scan_state(path, last_offset=eof, pending_offset=eof, sealed=1)
         logger.debug("백필 %s: %d콜", os.path.basename(path), n)
         return True

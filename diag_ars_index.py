@@ -10,6 +10,9 @@ diag_ars_index.py — "ARS 인바운드 오늘자 로그가 안 나온다" 원�
     python diag_ars_index.py --hours 3        # 최근 3시간 파일까지 확인
     python diag_ars_index.py --phone 01012345678
     python diag_ars_index.py --unseal         # 잘못 확정된 오늘 파일 해제(복구)
+    python diag_ars_index.py --hours 6 --reset-partial
+                                              # 부분만 읽고 확정된 파일 이어읽기
+    python diag_ars_index.py --reset-days 2   # 최근 2일 재색인
 """
 import os
 import sys
@@ -39,6 +42,11 @@ def main():
                          "(접속 장애 중 '없는 파일'로 오인 확정된 구간 복구)")
     ap.add_argument("--reset-all", action="store_true",
                     help="scan_state 전체 초기화 — 재기동 시 전 구간 재색인")
+    ap.add_argument("--reset-partial", action="store_true",
+                    help="끝까지 읽지 않았는데 확정된 파일의 확정을 해제 "
+                         "(읽은 위치는 유지 — 나머지 구간만 이어서 색인)")
+    ap.add_argument("--reset-days", type=int, default=None, metavar="N",
+                    help="최근 N일치 scan_state 를 모두 초기화 — 재기동 시 그 구간 재색인")
     args = ap.parse_args()
 
     from config_manager import get_enabled_servers, get_log_paths, get_server_label
@@ -102,6 +110,7 @@ def main():
     conn = None
     any_today_file = False
     today_paths = []          # 5번(복구)에서 재사용 — 파일명 패턴 추측 없이 정확히
+    partial_paths = []        # 끝까지 안 읽혔는데 확정된 파일 (--reset-partial 대상)
     for idx, srv in targets:
         label = get_server_label(srv)
         is_ssh = (srv.get("access_method") or "unc") == "ssh"
@@ -162,7 +171,16 @@ def main():
                           f"★ 인덱서가 한 번도 읽지 않음(scan_state 없음)")
                 else:
                     lag = size - (st.get("last_offset") or 0)
-                    flag = " ★ sealed(더 이상 안 읽음)" if st.get("sealed") else ""
+                    if not st.get("sealed"):
+                        flag = ""
+                    elif lag > 0:
+                        # 끝까지 읽지 않았는데 확정된 것 = 비정상. 이 구간은
+                        # 다시 읽히지 않으므로 --reset-partial 로 풀어야 한다.
+                        flag = f" ★★ 부분만 읽고 확정됨 — {lag:,}바이트 유실"
+                        partial_paths.append(path)
+                    else:
+                        # 지난 시각 파일이 끝까지 읽힌 뒤 확정된 것 = 정상
+                        flag = "  확정(정상 — 끝까지 읽음)"
                     print(f"  {label} {tag}  {name}: size={size:,} "
                           f"last={st.get('last_offset'):,} 뒤처짐={lag:,}"
                           f"  갱신={st.get('updated_at')}{flag}")
@@ -257,7 +275,36 @@ def main():
         else:
             print("  해제할 파일 없음 (오늘자 파일 중 확정된 것이 없습니다)")
 
+    # ── 5-1) 부분만 읽고 확정된 파일 복구 ──────────────────
+    if args.reset_partial:
+        _hr("5-1. 부분 확정 해제")
+        if not partial_paths:
+            print("  해당 파일 없음 (2번에서 '부분만 읽고 확정됨' 표시가 없었습니다)")
+        for path in dict.fromkeys(partial_paths):
+            st = store.get_scan_state(path)
+            if not st:
+                continue
+            # last_offset 을 유지해야 처음부터 다시 읽지 않는다.
+            # pending_offset 은 '아직 안 끝난 콜의 시작점'이라 그대로 둔다.
+            store.set_scan_state(path, st.get("last_offset") or 0,
+                                 st.get("pending_offset") or 0, sealed=0)
+            print(f"  해제: {os.path.basename(path)} (last={st.get('last_offset'):,} 부터 이어 읽음)")
+        if partial_paths:
+            print(f"  총 {len(set(partial_paths))}건 — 웹 서버를 재기동하면 이어서 읽습니다.")
+
     # ── 6) 접속 장애로 잘못 확정된 구간 복구 ────────────────
+    if args.reset_days is not None:
+        _hr(f"6. 최근 {args.reset_days}일 scan_state 초기화")
+        cutoff = (now - timedelta(days=args.reset_days)).strftime("%Y-%m-%d %H:%M:%S")
+        with store._lock:
+            n = store._conn.execute(
+                "SELECT COUNT(*) FROM scan_state WHERE updated_at >= ?",
+                (cutoff,)).fetchone()[0]
+            store._conn.execute("DELETE FROM scan_state WHERE updated_at >= ?", (cutoff,))
+            store._conn.commit()
+        print(f"  {n}건 삭제 ({cutoff} 이후 갱신분)")
+        print("  → 웹 서버를 재기동하면 해당 구간을 처음부터 다시 색인합니다.")
+
     if args.reset_failed or args.reset_all:
         _hr("6. 색인 상태 초기화")
         with store._lock:
@@ -283,7 +330,9 @@ def main():
     _hr("판정 가이드")
     print("""  · 1번 '★ 색인 제외'        → 인바운드 경로 미등록. 서버 관리에서 등록
   · 2번 '읽기 실패' + 사유    → 경로 템플릿 / 권한 / SSH 접속 문제 (사유 참고)
-  · 2번에서 'sealed' 표시    → 잘못 확정됨. --unseal 후 재기동
+  · 2번 '확정(정상)'         → 지난 시각 파일이 끝까지 읽힌 상태. 정상입니다
+  · 2번 '부분만 읽고 확정됨' → --reset-partial 후 재기동 (나머지만 이어 읽음)
+  · 2번 오늘 파일이 sealed   → --unseal 후 재기동
   · 2번 '뒤처짐'이 계속 커짐 → 인덱서 스레드 정지/오류 (logs/app.log 확인)
   · 2번 정상인데 3번이 0건   → 콜 경계 미검출 (call_start/WaitCall 패턴 불일치)
   · 3번에 콜이 있는데 화면 X → 검색 조건(서버 선택/날짜) 또는 조회 경로 문제
