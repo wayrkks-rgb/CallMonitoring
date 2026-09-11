@@ -2053,7 +2053,9 @@
 
                 if (data.success) {
                     statusEl.className = 'key-status success';
-                    statusEl.textContent = '✅ ' + data.message;
+                    // 어느 대상에 등록했는지 함께 보여준다 — 입력값이 아닌
+                    // 엉뚱한 서버로 나갔는지 바로 확인할 수 있도록
+                    statusEl.textContent = `✅ ${user}@${ip}:${port} — ${data.message}`;
                     document.getElementById('newPassword').value = '';
                     // 키 등록은 서버를 만들지 않는다. 여기서 받은 키 경로를 들고
                     // 있다가 [추가] 요청에 함께 보내야 등록과 동시에 접속된다.
@@ -2131,6 +2133,15 @@
             document.getElementById('keyRegStatus').className = 'key-status';
             document.getElementById('keyRegStatus').textContent = '';
             _pendingKeyPath = '';   // 앞서 등록한 다른 서버의 키가 따라붙지 않게
+            // 입력값도 반드시 비운다. 남겨두면 IP 만 바꾸고 등록했을 때
+            // 호스트명·계정·포트가 '앞 서버 값'인 채로 전송돼, 엉뚱한 서버로
+            // 키가 등록되거나 다른 서버의 설정을 덮어쓴다.
+            document.getElementById('newIp').value = '';
+            document.getElementById('newHostname').value = '';
+            document.getElementById('newLabel').value = '';
+            document.getElementById('newPassword').value = '';
+            document.getElementById('newUser').value = 'loguser';
+            document.getElementById('newPort').value = 22;
             document.getElementById('newType').value = 'AICC';
             document.getElementById('newEnv').value = '';
             document.getElementById('newAccessMethod').value = 'unc';

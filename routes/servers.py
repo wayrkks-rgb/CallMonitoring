@@ -405,9 +405,13 @@ def register_server_key():
         ssh_dir = Path.home() / '.ssh'
         ssh_dir.mkdir(mode=0o700, exist_ok=True)
 
-        safe_label = re.sub(r'[^\w\-]', '_', label)
-        private_key_path = ssh_dir / f'id_rsa_{safe_label}'
-        public_key_path = ssh_dir / f'id_rsa_{safe_label}.pub'
+        # 키 파일 이름에 IP 까지 넣는다. 호스트명만 쓰면 이름이 비슷하거나 빈
+        # 서버끼리 같은 파일을 덮어써, 방금 등록한 키가 다른 서버 것으로 바뀐다.
+        safe_label = re.sub(r'[^\w\-]', '_', label) or 'server'
+        safe_ip = re.sub(r'[^\w\-]', '_', ip)
+        stem = f'id_rsa_{safe_label}' if safe_label == safe_ip else f'id_rsa_{safe_label}_{safe_ip}'
+        private_key_path = ssh_dir / stem
+        public_key_path = ssh_dir / f'{stem}.pub'
 
         key = paramiko.RSAKey.generate(bits=4096)
         key.write_private_key_file(str(private_key_path))
@@ -481,17 +485,20 @@ def register_server_key():
         config = load_config()
         if config:
             servers = config.get('remote_servers', [])
-            for server in servers:
-                if (server.get('ip') == ip) or (server.get('hostname') == label and label != ip):
-                    server['type'] = srv_type
-                    if is_windows:
-                        server['access_method'] = 'ssh'   # ARS-SSH 확정
-                    server['ssh_key_path'] = str(private_key_path)
-                    server['log_paths'] = normalize_log_paths(server.get('log_paths'))
-                    linked = True
-                    logger.info(f"기존 서버에 ssh_key_path 업데이트: {ip}")
-                    break
-            if linked:
+            # IP 가 가장 확실한 식별자다. 호스트명 먼저 훑으면 이름이 겹치는
+            # 엉뚱한 서버에 키가 붙을 수 있으므로 IP → 호스트명 순으로 찾는다.
+            target = next((s for s in servers if s.get('ip') and s.get('ip') == ip), None)
+            if target is None and label and label != ip:
+                target = next((s for s in servers if s.get('hostname') == label), None)
+            if target is not None:
+                target['type'] = srv_type
+                if is_windows:
+                    target['access_method'] = 'ssh'   # ARS-SSH 확정
+                target['ssh_key_path'] = str(private_key_path)
+                target['log_paths'] = normalize_log_paths(target.get('log_paths'))
+                linked = True
+                logger.info(f"기존 서버에 ssh_key_path 업데이트: "
+                            f"{get_server_label(target)} ({ip})")
                 save_config(config)
 
         msg = 'SSH 키 등록 완료. 이후 패스워드 없이 접속됩니다.'
