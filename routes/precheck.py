@@ -42,10 +42,61 @@ _BLOCK = re.compile(
     r'\[(?P<name>[^\]]*)\]\[(?P<block>\d{8})\]\[(?P<node>[^\]]*)\]\s+'
     r'End Event\[(?P<result>[^\]]*)\]')
 _DTMF = re.compile(r'\[GETDIGIT\]\s+Inputdigit\s*=\s*(?P<d>[\dA-D\*#]+)')
-_SCREEN_FULL = re.compile(r'(?:szSendMenuData|SendData)\((?P<payload>S\$(?P<scr>HLI[A-Z0-9]+);.*?)\)')
-_SCREEN = re.compile(r'\[WV_SENDMENU\].*?S\$(?P<scr>HLI[A-Z0-9]+)')
+# 페이로드 본문에 ')' 가 들어가는 경우(예: "보험료(월납)")가 있어 탐욕 매칭 후
+# 마지막 ')' 까지 잡는다. 비탐욕(.*?)이면 첫 괄호에서 잘려 메뉴가 누락됨.
+# 파라미터 없는 화면(S$HLIA01)도 잡도록 구분자 이후는 선택.
+# 구분자는 ';' 과 ':' 이 섞여 쓰인다 (S$HLIB10;TIT$…</font>:TXT$0$L$…).
+# ';' 만 허용하면 ':' 로 이어지는 화면을 통째로 놓친다.
+_SCREEN_FULL = re.compile(
+    r'(?:szSendMenuData|SendData)\(\s*(?P<payload>S\$(?P<scr>HLI[A-Z0-9]+)(?:[;:].*)?)\)')
+_SCREEN = re.compile(r'WV_SENDMENU.*?S\$(?P<scr>HLI[A-Z0-9]+)')
 _SCN_ANY = re.compile(r'\[(?P<scn>[가-힣A-Za-z0-9_]+\.d?xml)\]')
 _TERM = re.compile(r'TERM REASON ==>\s*(?P<r>TM_\w+)')
+# SendData 는 payload 를 ':' 로 이어 2번 이상 반복해 보낸다.
+# 두 번째 사본부터는 다음 화면 데이터이므로 첫 사본만 남긴다.
+# (코드가 같은 경우만 잘라내면 ':S$HLIB00' 처럼 다른 코드로 이어진 잔여물이
+#  남아 화면에 'S$HLI…' 가 그대로 노출되고, 다음 화면의 메뉴까지 섞여 들어온다)
+_SCR_DUP = re.compile(r':S\$HLI[A-Z0-9]+')
+
+# 세그먼트 구분자: ';' 또는 ':' 이지만, 바로 뒤에 'KEY$' 가 오는 경우만.
+# 텍스트 값에 CSS 가 들어와 ("font-size: 22px; color: #FF6600") 단순 split(';')
+# 은 값을 중간에서 끊는다. 실제로 화면에 ':TXT$0$L$' 가 노출되고 CSS 의 ';' 가
+# 사라지는 원인이었다.
+_SEG_SPLIT = re.compile(r'[;:](?=[A-Z][A-Z0-9_]{0,9}\$)')
+
+# 로그의 함수 호출 꼬리 — SendData 는 전송 라인과 결과 라인이 따로 찍히고,
+# 결과 라인에는 sResultCode(...)/sSelectDtmf(...)/sUserData(...) 가 붙는다.
+# 이걸 payload 로 같이 걷어오면 같은 화면이 매번 다른 payload 로 보여
+# 중복 제거가 안 된다(같은 화면이 5장씩 쌓이는 원인).
+_CALL_TAIL = re.compile(
+    r'''[;'"\s)]*\b(?:sResultCode|sSelectDtmf|nUserDataSize|sUserData|sRetData)\b\s*\(.*$''',
+    re.S)
+_EDGE_JUNK = re.compile(r'''^[\s'"(]+|[\s;'")]+$''')
+
+
+def _payload_segments(payload):
+    """payload → 세그먼트 리스트 (['S$HLIB10', 'TIT$0$S$...', ...])."""
+    return [s for s in _SEG_SPLIT.split(payload or '') if s]
+
+
+def _normalize_payload(payload):
+    """
+    표시/비교용 payload 정리.
+      1) 다음 화면 경계(':S$HLIxxx') 이후 절단
+      2) 함수 호출 결과 꼬리(sResultCode(...) 등) 제거
+      3) 양끝 따옴표/괄호/세미콜론 정리
+    """
+    if not payload:
+        return payload
+    m = _SCR_DUP.search(payload)
+    if m:
+        payload = payload[:m.start()]
+    payload = _CALL_TAIL.sub('', payload)
+    return _EDGE_JUNK.sub('', payload)
+
+
+# 이전 이름 유지 (호출부 호환)
+_first_screen_payload = _normalize_payload
 
 SENTINEL = "99999999"
 _RENDER_SCN = {"W_WebVoicePlay.dxml", "W_WebVoice_Main.dxml"}
@@ -93,14 +144,26 @@ def _parse_ars_lines(ars_lines):
             is_webvoice = True
             code = msc.group("scr")
             payload = mfull.group("payload") if mfull else ("S$" + code)
-            _dup = re.search(r'^(S\$' + re.escape(code) + r';.*?);?:S\$' + re.escape(code) + r';',payload)
-            if _dup:
-                payload = _dup.group(1)
-            if not screens or screens[-1]["code"] != code:
+            payload = _normalize_payload(payload)
+            # ── '한 업무 = 한 화면' 판정 ────────────────────────
+            # 같은 화면이 전송/결과/재전송 라인으로 여러 번 찍히므로 합쳐야 하고,
+            # 반대로 같은 코드로 대→중→소분류를 연속 전송하는 경우(HLIB00)는
+            # 나눠야 한다. 기준: 연속 + 같은 코드 + 같은 '내용 키'.
+            #   내용 키 = 제목/본문/버튼 라벨의 순수 텍스트 (마크업·공백·결과필드 무시)
+            # 코드만 잡힌 부분 로그(stub)는 내용 키가 코드뿐이라 자동으로 합쳐진다.
+            prev = screens[-1] if screens else None
+            ckey = _content_key(code, payload)
+            same_screen = (prev is not None and prev["code"] == code
+                           and prev["ckey"] == ckey)
+            if same_screen:
+                if len(payload) > len(prev["payload"]):   # 더 상세한 쪽으로 보강
+                    prev["payload"] = payload
+                    if not prev.get("scn"):
+                        prev["scn"] = cur_scn[0]
+                prev["repeat"] = prev.get("repeat", 1) + 1
+            else:
                 screens.append({"ts": ts, "code": code, "payload": payload,
-                                "scn": cur_scn[0]})
-            elif len(payload) > len(screens[-1]["payload"]):
-                screens[-1]["payload"] = payload
+                                "ckey": ckey, "scn": cur_scn[0], "repeat": 1})
         md = _DTMF.search(s)
         if md and md.group("d").strip():
             dtmf.append({"ts": ts, "digit": md.group("d").strip()})
@@ -138,20 +201,89 @@ def _biz_name(scn):
     stem = re.sub(r'\.(dxml|xml)$', '', scn or '')
     return _BIZ_NAME.get(stem, stem.replace('W_', ''))
 
+# 로그 텍스트에는 표시용 마크업(<font style='...'>, <br>)이 들어온다.
+# 요약 라벨에는 태그를 걷어내고 글자만 쓴다.
+_TAG = re.compile(r'<[^>]*>')
+_WS = re.compile(r'\s+')
+
+
+def _plain(text):
+    """마크업/구분자 제거한 순수 텍스트."""
+    t = _TAG.sub(' ', text or '').replace('|', ' ')
+    return _WS.sub(' ', t).strip()
+
+
+def _seg_value(segments, key, idx=-1):
+    """segments 에서 key 세그먼트의 마지막 필드 값. 없으면 ''."""
+    for seg in segments:
+        parts = seg.split('$')
+        if parts[0] == key and len(parts) > 1:
+            v = parts[idx] if idx != -1 else parts[-1]
+            if v:
+                return v
+    return ''
+
+
+# 내용 키에 반영할 세그먼트 (표시되는 것들만 — 시퀀스/결과 필드는 제외)
+_CKEY_KEYS = ("TIT", "TXT", "STR", "BTNM", "BTN", "BTNA", "BTN2", "BTNE2",
+              "BTNQ2", "BTNZ", "INP", "INP2", "INPH", "INPTXT")
+
+
+def _content_key(code, payload):
+    """
+    화면의 '내용' 지문. 같은 업무 단계의 재전송/결과 라인은 같은 값이 되고,
+    실제로 내용이 바뀐 화면(다음 분류 메뉴)은 다른 값이 된다.
+    """
+    parts = [code]
+    for seg in _payload_segments(payload):
+        f = seg.split('$')
+        if f[0] in _CKEY_KEYS:
+            parts.append(f[0] + '=' + _plain(f[-1]))
+    return '|'.join(parts)
+
+
+def _screen_label(s):
+    """
+    요약에 쓸 화면 라벨.
+
+    화면코드 이름(_screen_name)은 템플릿명("메뉴 리스트")이라, 같은 코드로
+    대→중→소분류를 연속 전송하는 보이는ARS 에선 모든 단계가 같은 이름이 되어
+    중복 제거에 전부 합쳐진다. 실제 화면 제목(TIT→TXT)이 있으면 그걸 쓴다.
+    """
+    segs = _payload_segments(s.get("payload") or "")
+    for key in ("TIT", "TXT", "STR"):
+        t = _plain(_seg_value(segs, key))
+        if t:
+            return t[:40] + ('…' if len(t) > 40 else '')
+    return _screen_name(s["code"])
+
+
 def _service_flow(flow, screens):
-    """의미있는 서비스 흐름 요약: 시나리오 전환 + 화면(메뉴) 이름."""
-    seq = []
+    """
+    의미있는 서비스 흐름 요약: 시나리오 전환 + 화면(메뉴)을 시간순으로 병합.
+
+    시나리오와 화면을 각각 따로 이어붙이면 '시나리오들 > 화면들' 순서가 되어
+    실제 진행 순서와 달라지고, 뒤쪽(메뉴)이 통째로 잘려 보인다. ts 로 병합한다.
+    """
+    items = []
     for f in flow:
         scn = f.get("scn", "")
         if _SKIP_SCN.search(scn):
             continue
         nm = _biz_name(scn)
-        if nm and (not seq or seq[-1] != nm):
-            seq.append(nm)
-    # 화면코드로 보강 (메뉴 선택 흐름)
+        if nm:
+            items.append((f.get("ts") or "", 0, nm))
     for s in screens:
-        nm = _screen_name(s["code"])
-        if nm and (not seq or seq[-1] != nm):
+        nm = _screen_label(s)
+        if nm:
+            items.append((s.get("ts") or "", 1, nm))
+
+    # ts 우선 정렬 (ts 없는 항목은 원래 순서 유지 — sort 안정성 이용)
+    items.sort(key=lambda x: (x[0] == "", x[0]))
+
+    seq = []
+    for _, _, nm in items:
+        if not seq or seq[-1] != nm:
             seq.append(nm)
     return seq
 
@@ -208,7 +340,9 @@ def _build_precheck(ars_lines, env, folder=None, call_meta=None):
     elif parsed["has_error"]:
         end_type = "오류 발생"
 
-    screen_flow = [{"code": s["code"], "name": _screen_name(s["code"]), "ts": s["ts"],
+    # label: 화면 제목(TIT) 기반 실제 메뉴명. 없으면 화면코드 이름(템플릿명).
+    screen_flow = [{"code": s["code"], "name": _screen_name(s["code"]),
+                    "label": _screen_label(s), "ts": s["ts"],
                     "payload": s.get("payload", "S$" + s["code"]), "scn": s.get("scn")}
                    for s in parsed["screens"]]
     last_screen = screen_flow[-1] if screen_flow else None
@@ -219,7 +353,17 @@ def _build_precheck(ars_lines, env, folder=None, call_meta=None):
     reason = TERM_DESC.get(term or "", end_by or "")
     scr_txt = f" · 화면 '{last_screen['name']}'" if last_screen else ""
     svc_flow = _service_flow(flow, parsed["screens"])
-    flow_summary = " > ".join(svc_flow[:6]) if svc_flow else where
+    # 요약은 길어질 수 있어 상한을 두지만, 잘렸으면 반드시 표시한다.
+    # (예전엔 [:6] 으로 조용히 잘려 메뉴 흐름이 중간에 끊긴 것처럼 보였다.
+    #  전체 단계는 service_flow / screen_flow 로 그대로 내려보낸다.)
+    FLOW_SUMMARY_MAX = 12
+    if not svc_flow:
+        flow_summary = where
+    else:
+        shown = svc_flow[:FLOW_SUMMARY_MAX]
+        flow_summary = " > ".join(shown)
+        if len(svc_flow) > FLOW_SUMMARY_MAX:
+            flow_summary += f" > … (총 {len(svc_flow)}단계)"
     interpretation = f"[{flow_summary}] 흐름 ㆍ {reason or end_type}(으)로 종료"
 
     return {
