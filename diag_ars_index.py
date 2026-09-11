@@ -24,6 +24,19 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
 
+def _tmpl_matches(tmpl, path):
+    """경로 템플릿({YYYY} 등 포함)이 이 실제 경로에서 나온 것인지."""
+    import re as _re
+    rx = _re.escape(tmpl)
+    # {YYYY-MM-DD} 는 숫자만이 아니라 하이픈도 포함해 전개된다 → [0-9-]+
+    for tok in ("{YYYY-MM-DD}", "{YYYYMMDD}", "{YYYY}", "{MM}", "{DD}", "{MMDD}", "{HH}"):
+        rx = rx.replace(_re.escape(tok), r"[0-9-]+")
+    try:
+        return _re.fullmatch(rx, path) is not None
+    except _re.error:
+        return False
+
+
 def _hr(t=""):
     print("\n" + "=" * 72)
     if t:
@@ -344,21 +357,58 @@ def main():
             print("  해제할 파일 없음 (오늘자 파일 중 확정된 것이 없습니다)")
 
     # ── 5-1) 부분만 읽고 확정된 파일 복구 ──────────────────
+    # 확정된 파일 '전부'를 실제 크기와 대조한다. 2번은 --hours 범위의 오늘자만
+    # 보므로, 어제/그제 구간이 부분 확정돼 있으면 그대로 남아 있었다.
+    # (--reset-partial 을 해도 달라지는 게 없던 이유)
     if args.reset_partial:
-        _hr("5-1. 부분 확정 해제")
-        if not partial_paths:
-            print("  해당 파일 없음 (2번에서 '부분만 읽고 확정됨' 표시가 없었습니다)")
-        for path in dict.fromkeys(partial_paths):
-            st = store.get_scan_state(path)
-            if not st:
+        days = args.reset_days if args.reset_days is not None else 3
+        _hr(f"5-1. 부분 확정 해제 (최근 {days}일 확정분 전수 대조)")
+        label_to_srv = {get_server_label(s): s for _, s in targets}
+        rows = store.sealed_files(since_days=days)
+        print(f"  확정된 파일 {len(rows)}건을 실제 크기와 대조합니다…")
+
+        io_cache = {}
+        fixed = unknown = intact = 0
+        for r in rows:
+            path, last = r["file_path"], (r.get("last_offset") or 0)
+            srv = label_to_srv.get(r.get("server"))
+            if srv is None:
+                # server 컬럼이 없던 시절의 행 — 경로로 서버를 되짚는다
+                srv = next((s for lbl, s in label_to_srv.items()
+                            if any(_tmpl_matches(t, path)
+                                   for t in get_log_paths(s, "inbound"))), None)
+            if srv is None:
+                unknown += 1
                 continue
-            # last_offset 을 유지해야 처음부터 다시 읽지 않는다.
-            # pending_offset 은 '아직 안 끝난 콜의 시작점'이라 그대로 둔다.
-            store.set_scan_state(path, st.get("last_offset") or 0,
-                                 st.get("pending_offset") or 0, sealed=0)
-            print(f"  해제: {os.path.basename(path)} (last={st.get('last_offset'):,} 부터 이어 읽음)")
-        if partial_paths:
-            print(f"  총 {len(set(partial_paths))}건 — 웹 서버를 재기동하면 이어서 읽습니다.")
+
+            if (srv.get("access_method") or "unc") == "ssh":
+                from ars_ssh_fetcher import ArsSshIO
+                io = io_cache.setdefault("ssh", ArsSshIO())
+                size, status = io.stat(srv, path)
+            else:
+                try:
+                    size, status = os.path.getsize(path), "ok"
+                except OSError:
+                    size, status = None, "nofile"
+
+            if status != "ok" or size is None:
+                continue          # 없는 파일은 확정이 맞다
+            if size <= last:
+                intact += 1
+                continue          # 끝까지 읽고 확정 — 정상
+            store.set_scan_state(path, last, r.get("pending_offset") or 0,
+                                 sealed=0, server=r.get("server"))
+            fixed += 1
+            print(f"  해제: {os.path.basename(path)}  "
+                  f"{last:,} → {size:,} ({size - last:,}바이트 남음)")
+
+        print(f"\n  정상 확정 {intact}건 · 해제 {fixed}건"
+              + (f" · 서버 불명 {unknown}건" if unknown else ""))
+        if fixed:
+            print("  → 웹 서버를 재기동하면 남은 구간을 이어서 읽습니다.")
+        else:
+            print("  → 확정 상태는 모두 정상입니다. 콜이 0건이라면 읽기가 아니라")
+            print("     콜 경계 인식 문제이므로 --sample 을 보세요.")
 
     # ── 6) 접속 장애로 잘못 확정된 구간 복구 ────────────────
     if args.reset_days is not None:

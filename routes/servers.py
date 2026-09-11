@@ -118,33 +118,29 @@ def add_server():
                 break
 
         if conflict:
+            # 같은 서버를 다시 등록하는 것은 '오류'가 아니라 '갱신'이다.
+            # 막아 세워 봐야 사용자는 목록에서 지우고 다시 넣는 수밖에 없는데,
+            # 그 사이 로그 경로까지 날아간다. 그냥 그 자리를 갱신한다.
             i, old, what = conflict
-            if not data.get('overwrite'):
-                return jsonify({
-                    'success': False,
-                    'error': f'이미 등록된 서버입니다 — {what} 가 '
-                             f'[{i}] {get_server_label(old)} 와 같습니다',
-                    'duplicate': {
-                        'id': i,
-                        'display_name': get_server_label(old),
-                        'type': old.get('type', 'AICC'),
-                        'hostname': old.get('hostname', ''),
-                        'ip': old.get('ip', ''),
-                        'field': what,
-                    },
-                })
-            # 덮어쓰기: 기존 항목을 갱신한다. 로그 경로와 키 경로는 새로 입력한
-            # 값이 비어 있으면 기존 것을 살린다(경로를 통째로 날리지 않도록).
+            # 이번에 입력하지 않은 항목은 기존 값을 살린다(통째로 날리지 않도록)
             if not any(new_server['log_paths'].get(p) for p in PURPOSES):
                 new_server['log_paths'] = normalize_log_paths(old.get('log_paths'))
-            if server_type == 'AICC' and not new_server.get('ssh_key_path'):
+            if not new_server.get('ssh_key_path') and old.get('ssh_key_path'):
                 new_server['ssh_key_path'] = old.get('ssh_key_path')
+            for field in ('user', 'ssh_port'):
+                if not new_server.get(field) and old.get(field):
+                    new_server[field] = old.get(field)
             servers[i] = new_server
             config['remote_servers'] = servers
             if save_config(config):
-                logger.info(f"서버 덮어쓰기: [{server_type}] {get_server_label(new_server)}")
-                return jsonify({'success': True, 'message': '기존 등록을 갱신했습니다',
-                                'server': new_server})
+                logger.info(f"서버 갱신(동일 {what}): [{server_type}] "
+                            f"{get_server_label(new_server)}")
+                return jsonify({
+                    'success': True,
+                    'updated': True,
+                    'message': f'이미 등록된 서버({what})라 기존 항목을 갱신했습니다',
+                    'server': new_server,
+                })
             return jsonify({'success': False, 'error': '설정 저장 실패'})
 
         servers.append(new_server)

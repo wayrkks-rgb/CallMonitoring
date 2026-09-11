@@ -56,9 +56,15 @@ CREATE TABLE IF NOT EXISTS scan_state (
     last_offset     INTEGER,   -- 지금까지 읽어들인 EOF 위치(신규 데이터 감지용)
     pending_offset  INTEGER,   -- 다음 스캔 시작점(아직 안 끝난 콜의 시작 바이트)
     sealed          INTEGER DEFAULT 0,  -- 1이면 더 이상 커지지 않는 완료 파일
-    updated_at      TEXT
+    updated_at      TEXT,
+    server          TEXT       -- 이 파일이 속한 서버 라벨
 );
 """
+
+# 기존 DB 에 없을 수 있는 컬럼 (있으면 무시, 없으면 추가)
+_ADD_COLUMNS = [
+    ("scan_state", "server", "TEXT"),
+]
 
 
 class ArsIndexStore:
@@ -71,6 +77,13 @@ class ArsIndexStore:
             self._conn.execute("PRAGMA journal_mode=WAL;")
             self._conn.execute("PRAGMA synchronous=NORMAL;")
             self._conn.executescript(_SCHEMA)
+            # 이전 버전에서 만들어진 DB 는 CREATE TABLE IF NOT EXISTS 로는
+            # 컬럼이 늘지 않는다. 빠진 컬럼만 골라 붙인다.
+            for table, col, decl in _ADD_COLUMNS:
+                cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+                if col not in cols:
+                    self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+                    logger.info("scan_state 에 %s 컬럼 추가", col)
             self._conn.commit()
 
     # ── 콜 UPSERT ─────────────────────────────────────────
@@ -151,18 +164,22 @@ class ArsIndexStore:
             r = cur.fetchone()
             return dict(r) if r else None
 
-    def set_scan_state(self, file_path, last_offset, pending_offset, sealed=0):
+    def set_scan_state(self, file_path, last_offset, pending_offset, sealed=0,
+                       server=None):
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         with self._lock:
             self._conn.execute("""
-                INSERT INTO scan_state (file_path, last_offset, pending_offset, sealed, updated_at)
-                VALUES (?,?,?,?,?)
+                INSERT INTO scan_state
+                  (file_path, last_offset, pending_offset, sealed, updated_at, server)
+                VALUES (?,?,?,?,?,?)
                 ON CONFLICT(file_path) DO UPDATE SET
                    last_offset=excluded.last_offset,
                    pending_offset=excluded.pending_offset,
                    sealed=excluded.sealed,
-                   updated_at=excluded.updated_at
-            """, (file_path, last_offset, pending_offset, sealed, now))
+                   updated_at=excluded.updated_at,
+                   -- 서버 라벨은 알 때만 갱신 (모르고 호출한 쪽이 지우지 않도록)
+                   server=COALESCE(excluded.server, scan_state.server)
+            """, (file_path, last_offset, pending_offset, sealed, now, server))
             self._conn.commit()
 
     def active_scan_files(self, only_unsealed=True):
@@ -171,6 +188,18 @@ class ArsIndexStore:
             if only_unsealed:
                 q += " WHERE sealed = 0"
             return [dict(r) for r in self._conn.execute(q).fetchall()]
+
+    def sealed_files(self, since_days=None):
+        """확정(sealed=1)된 스캔 상태 목록. since_days 지정 시 그 기간 갱신분만."""
+        q = "SELECT * FROM scan_state WHERE sealed = 1"
+        params = []
+        if since_days is not None:
+            cutoff = (datetime.now() - timedelta(days=since_days)).strftime('%Y-%m-%d %H:%M:%S')
+            q += " AND updated_at >= ?"
+            params.append(cutoff)
+        q += " ORDER BY updated_at DESC"
+        with self._lock:
+            return [dict(r) for r in self._conn.execute(q, params).fetchall()]
 
     # ── 정리 / 상태 ───────────────────────────────────────
     def purge_older_than(self, days=RETENTION_DAYS):

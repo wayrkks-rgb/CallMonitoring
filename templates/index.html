@@ -2290,22 +2290,9 @@
             };
 
             try {
-                let data = await post(payload);
-
-                // 이미 같은 IP/호스트/라벨이 등록돼 있는 경우.
-                // 어느 항목과 부딪혔는지 보여주고, 원하면 그 항목을 갱신한다.
-                // (SSH 키 등록이 서버를 먼저 만들어 두는 경로가 있어 흔하다)
-                if (!data.success && data.duplicate) {
-                    const d = data.duplicate;
-                    const ok = confirm(
-                        `${data.error}\n\n` +
-                        `기존 등록: [${d.type}] ${d.display_name}` +
-                        `${d.ip ? ' (' + d.ip + ')' : ''}\n\n` +
-                        `이 항목을 지금 입력한 내용으로 덮어쓸까요?\n` +
-                        `(로그 경로는 유지됩니다)`);
-                    if (!ok) return;
-                    data = await post({...payload, overwrite: true});
-                }
+                // 같은 서버를 다시 등록하면 서버가 그 자리를 갱신한다
+                // (updated:true). 중복이라고 막지 않는다.
+                const data = await post(payload);
 
                 if (data.success) {
                     alert(data.message || '서버가 추가되었습니다');

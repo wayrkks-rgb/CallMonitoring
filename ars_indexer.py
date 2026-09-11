@@ -194,7 +194,8 @@ class ArsIndexer:
         if st and st.get('sealed'):
             logger.warning("확정된 라이브 파일 해제: %s", cur_path)
             self.store.set_scan_state(cur_path, st.get('last_offset') or 0,
-                                      st.get('pending_offset') or 0, sealed=0)
+                                      st.get('pending_offset') or 0, sealed=0,
+                                      server=label)
 
         # 현재 시각 파일: 절대 seal 안 함
         worked |= self._scan_and_store(server, label, cur_path, cur_date, seal=False)
@@ -236,7 +237,7 @@ class ArsIndexer:
             return False
         if size is None:                 # status == 'nofile'
             if seal and st:              # 사라진 파일 → 확정 처리
-                self.store.set_scan_state(path, last, start, sealed=1)
+                self.store.set_scan_state(path, last, start, sealed=1, server=label)
             return False
         if not seal and size <= last and (st is not None):
             return False  # 신규 데이터 없음
@@ -252,7 +253,7 @@ class ArsIndexer:
             logger.warning("확정 보류(끝까지 못 읽음): %s  진행=%s/%s",
                            os.path.basename(path), eof, size)
         self.store.set_scan_state(path, last_offset=eof, pending_offset=pending,
-                                  sealed=1 if (seal and done) else 0)
+                                  sealed=1 if (seal and done) else 0, server=label)
         if n:
             logger.debug("인덱싱 %s: %d콜 (%s)", os.path.basename(path), n, label)
         return bool(n)
@@ -429,7 +430,7 @@ class ArsIndexer:
         if status == 'error':
             return _retry()
         if status == 'nofile':
-            self.store.set_scan_state(path, 0, 0, sealed=1)
+            self.store.set_scan_state(path, 0, 0, sealed=1, server=label)
             return True
 
         # 이전 시도가 중간에 끊겼으면 그 지점부터 이어 읽는다 (매번 0부터 다시
@@ -443,10 +444,11 @@ class ArsIndexer:
         if not done:
             # 진행분만 저장하고 확정은 보류 — 다음 시도가 여기서 이어간다
             self.store.set_scan_state(path, last_offset=eof, pending_offset=pending,
-                                      sealed=0)
+                                      sealed=0, server=label)
             logger.warning("백필 중단(확정 보류) %s: 진행=%s", os.path.basename(path), eof)
             return _retry()
-        self.store.set_scan_state(path, last_offset=eof, pending_offset=eof, sealed=1)
+        self.store.set_scan_state(path, last_offset=eof, pending_offset=eof, sealed=1,
+                                  server=label)
         logger.debug("백필 %s: %d콜", os.path.basename(path), n)
         return True
 
