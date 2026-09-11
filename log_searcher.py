@@ -8,11 +8,12 @@
 - log_paths 는 config_manager 헬퍼로 purpose(inbound/outbound)별 조회
 """
 
+import os
 import re
 import logging
 from datetime import datetime, timedelta
 
-from ssh_fetcher import OpenSSHLogFetcher
+from ssh_fetcher import OpenSSHLogFetcher, split_filename
 from config_manager import get_enabled_servers, get_log_paths, get_server_label
 
 logger = logging.getLogger(__name__)
@@ -286,19 +287,24 @@ class LogSearcher:
             if not log_paths:
                 continue
 
+            # with_filename=True: 한 서버가 여러 로그파일(인바운드/아웃바운드,
+            # api/speech ...)을 보고 있어 결과만으로는 출처를 알 수 없다.
             lines, errors = self.fetcher.grep_remote(
-                server, log_paths, dates, pattern, use_extended=True
+                server, log_paths, dates, pattern,
+                use_extended=True, with_filename=True
             )
             if errors:
                 self.errors.extend(errors)
 
             for line in lines:
+                path, body = split_filename(line)
                 results.append({
-                    'line': line.strip(),
+                    'line': body.strip(),
                     'server': server_id,
                     'type': 'AICC',
-                    'file_path': f"{server_id}:pattern_search",
-                    'timestamp': self._extract_timestamp_from_line(line)
+                    'file': os.path.basename(path) if path else '',
+                    'file_path': path or f"{server_id}:pattern_search",
+                    'timestamp': self._extract_timestamp_from_line(body)
                 })
 
         return {

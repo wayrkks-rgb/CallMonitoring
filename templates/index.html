@@ -1926,6 +1926,34 @@
         // =====================================================================
         // 패턴 검색
         // =====================================================================
+
+        // 한 서버가 여러 로그파일을 보므로, 결과가 어느 파일에서 몇 줄 나왔는지
+        // 목록 위에 먼저 보여준다 (서버 · 파일별 건수).
+        function patternFileSummary(results) {
+            // 서버명에 공백이 섞일 수 있으므로 키는 로그에 없는 문자로 잇는다
+            const SEP = '\u0000';
+            const counts = new Map();
+            results.forEach(r => {
+                const key = `${r.server || '-'}${SEP}${r.file || ''}`;
+                counts.set(key, (counts.get(key) || 0) + 1);
+            });
+            if (counts.size <= 1) return '';
+            const rows = [...counts.entries()]
+                .sort((a, b) => b[1] - a[1])
+                .map(([key, n]) => {
+                    const [srv, file] = key.split(SEP);
+                    const name = file || '(파일 정보 없음)';
+                    return `<span style="display:inline-block; font-size:11px; background:#fff; border:1px solid #dee2e6; border-radius:8px; padding:3px 9px; margin:0 6px 6px 0;">
+                              <b>${esc(srv)}</b> · ${esc(name)}
+                              <span style="color:#F47725; font-weight:700; margin-left:4px;">${n}</span>
+                            </span>`;
+                }).join('');
+            return `<div style="margin-bottom:12px; padding:10px 12px; background:#f8f9fa; border:1px solid #e9ecef; border-radius:10px;">
+                      <div style="font-size:11px; color:#6c757d; font-weight:700; margin-bottom:6px;">출처 파일별 건수</div>
+                      ${rows}
+                    </div>`;
+        }
+
         async function searchByPattern() {
             const pattern   = document.getElementById('searchPattern').value.trim();
             const startDate = document.getElementById('patternStartDate').value;
@@ -1953,7 +1981,9 @@
 
                 const container = document.getElementById('patternResults');
                 if (data.success && data.results && data.results.length > 0) {
-                    container.innerHTML = `<h3 style="margin-bottom:12px;">검색 결과 (${data.results.length}줄)</h3>`;
+                    container.innerHTML =
+                        `<h3 style="margin-bottom:12px;">검색 결과 (${data.results.length}줄)</h3>`
+                        + patternFileSummary(data.results);
                     data.results.forEach(item => {
                         const safeContent = (item.line || '')
                             .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -1963,12 +1993,17 @@
                         const srvBadge = srv
                             ? `<span style="display:inline-block; font-size:10px; font-weight:700; color:#fff; background:${badgeColor}; padding:1px 6px; border-radius:8px; margin-right:6px;">${srv}</span>`
                             : '';
+                        // 한 서버가 여러 로그파일을 보므로 어느 파일에서 나온 줄인지 표시
+                        const file = esc(item.file || '');
+                        const fileBadge = file
+                            ? `<span title="${esc(item.file_path || item.file)}" style="display:inline-block; font-size:10px; font-weight:600; color:#495057; background:#e9ecef; border:1px solid #dee2e6; padding:1px 6px; border-radius:8px; margin-right:6px;">${file}</span>`
+                            : '';
                         const div = document.createElement('div');
                         div.className = 'timeline-row';
                         div.style = 'border-bottom:1px solid #eef0f3; padding:6px 0;';
                         div.innerHTML = `
                             <span class="timeline-ts">${fmtTs(item.timestamp, item.line) || '(시간 없음)'}</span>
-                            ${srvBadge}
+                            ${srvBadge}${fileBadge}
                             <span class="timeline-content">${safeContent}</span>`;
                         container.appendChild(div);
                     });

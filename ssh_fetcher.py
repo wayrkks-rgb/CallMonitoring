@@ -31,6 +31,23 @@ class ErrorType(Enum):
     UNKNOWN_ERROR = "알 수 없는 오류"
 
 
+def split_filename(line):
+    """grep -H 결과 한 줄을 (파일경로, 본문) 으로 분리.
+
+    grep -H 는 '경로:본문' 형태로 출력한다. 로그 본문에도 ':' 가 흔하지만
+    첫 번째 ':' 앞부분이 '/' 로 시작하는 절대경로일 때만 파일명으로 인정하므로
+    (원격 대상은 항상 절대경로) 본문의 시각 표기 등을 잘라먹지 않는다.
+    파일명이 없으면 ('', 원본) 을 돌려준다.
+    """
+    s = line or ''
+    if not s.startswith('/'):
+        return '', s
+    idx = s.find(':')
+    if idx <= 0:
+        return '', s
+    return s[:idx], s[idx + 1:]
+
+
 def check_openssh_installed():
     """OpenSSH 클라이언트 설치 여부 확인"""
     try:
@@ -173,7 +190,8 @@ class OpenSSHLogFetcher:
                 'details': error_msg
             }
 
-    def grep_remote(self, server_config, log_paths, dates, grep_pattern, use_extended=False):
+    def grep_remote(self, server_config, log_paths, dates, grep_pattern,
+                    use_extended=False, with_filename=False):
         """
         서버측 grep 실행 — 서버당 1회 SSH로 다중 경로/날짜 처리.
 
@@ -183,6 +201,8 @@ class OpenSSHLogFetcher:
             dates: 날짜 리스트 ["2025-01-10", ...] 또는 빈 리스트(최신)
             grep_pattern: grep에 전달할 검색 패턴 (정규식)
             use_extended: True이면 grep -E (확장 정규식, | 지원)
+            with_filename: True이면 각 줄 앞에 '파일경로:' 가 붙어서 반환된다
+                           (호출측에서 분리 — split_filename() 사용)
 
         Returns:
             (lines, errors): 매칭된 라인 리스트, 에러 리스트
@@ -204,7 +224,9 @@ class OpenSSHLogFetcher:
             }]
 
         # grep 명령 조합
-        remote_cmd = self._build_grep_command(grep_pattern, file_patterns, use_extended=use_extended)
+        remote_cmd = self._build_grep_command(grep_pattern, file_patterns,
+                                              use_extended=use_extended,
+                                              with_filename=with_filename)
 
         ssh_cmd = self._build_ssh_cmd(server_config, ssh_target)
         ssh_cmd.append(remote_cmd)
@@ -333,10 +355,12 @@ class OpenSSHLogFetcher:
         result = result.replace('{MMDD}', m + d)
         return result
 
-    def _build_grep_command(self, grep_pattern, file_patterns, use_extended=False):
+    def _build_grep_command(self, grep_pattern, file_patterns, use_extended=False,
+                            with_filename=False):
         """
         grep 명령 생성.
         use_extended=True이면 grep -E (확장 정규식, | 지원)
+        with_filename=True이면 grep -H (매칭 라인 앞에 '파일경로:' 를 붙임)
 
         패턴은 사용자 입력(검색어/custId)과 로그에서 뽑은 값(sessionKey)에서 오므로
         반드시 shlex.quote 로 감싼다. 직접 따옴표로 감싸면 패턴에 작은따옴표가
@@ -348,7 +372,11 @@ class OpenSSHLogFetcher:
         file_list = ' '.join(file_patterns)
         # -s: 없는/못 읽는 파일 메시지 억제 (2>/dev/null 대신 — 잘못된 정규식 같은
         #     진짜 오류는 stderr 로 남아 로그에 찍히게 한다)
-        flag = '-Ehs' if use_extended else '-hs'
+        # -h/-H: 파일명 숨김/표시. 한 서버가 여러 로그파일을 보는 경우 어느 파일에서
+        #        나온 줄인지 알아야 하므로 패턴 검색에서만 -H 를 쓴다.
+        #        (custId 흐름 검색은 라인 원문을 그대로 파싱하므로 -h 유지)
+        name_flag = 'H' if with_filename else 'h'
+        flag = f'-E{name_flag}s' if use_extended else f'-{name_flag}s'
         return f"grep {flag} -- {shlex.quote(grep_pattern)} {file_list}"
 
     def test_connection(self, server_config):

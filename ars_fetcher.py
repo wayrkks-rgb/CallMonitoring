@@ -774,6 +774,7 @@ class ArsLogFetcher:
                                 'server': label,
                                 'type': 'ARS',
                                 'file': fname,
+                                'file_path': path,
                                 'timestamp': _datetime_of(line),
                             })
                     del data  # 다음 파일 전에 해제

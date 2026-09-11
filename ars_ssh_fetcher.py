@@ -30,6 +30,7 @@ ARS 로그 접근 — SSH(Windows OpenSSH) 대체 경로  [UNC 대비책 / 장�
 """
 
 import base64
+import os
 import logging
 import subprocess
 from pathlib import Path
@@ -38,6 +39,11 @@ from ars_fetcher import ArsLogFetcher, _channel_of
 from config_manager import get_enabled_servers, get_log_paths, get_server_label
 
 logger = logging.getLogger(__name__)
+
+# grep 결과에 파일 경로를 함께 실어보낼 때 쓰는 구분자.
+# Windows 경로는 'D:\...' 처럼 콜론을 포함하므로 ':' 로는 자를 수 없고,
+# 로그 본문에도 나타나지 않을 조합이어야 한다.
+GREP_FILE_SEP = '|#|'
 
 
 # ── SSH/PowerShell 원시연산 ────────────────────────────────
@@ -229,27 +235,30 @@ class ArsSshIO:
     # utf8 로만 읽으면 CP949 파일에서 한글 패턴이 전혀 매칭되지 않는다.
     GREP_ENCODINGS = ('utf8', 'default')
 
-    def _grep_script(self, paths, pat, regex, encoding):
+    def _grep_script(self, paths, pat, regex, encoding, with_filename=False):
         # 주의: f-string 안의 PowerShell 중괄호는 {{ }} 로 이스케이프해야 하지만,
         #       PowerShell 에 전달될 때는 { } 하나로 나가야 한다.
         arr = ','.join("'" + p.replace("'", "''") + "'" for p in paths)
         simple = '' if regex else '-SimpleMatch '
+        # 파일명을 함께 내보낼 때는 Windows 경로에 ':' 가 들어있어(D:\...) 콜론으로
+        # 자를 수 없다. 로그 본문에 나올 일이 없는 구분자를 쓴다.
+        emit = (f"$_.Path + '{GREP_FILE_SEP}' + $_.Line" if with_filename else "$_.Line")
         return (
             "$ErrorActionPreference='SilentlyContinue';"
             f"$ps=@({arr}) | Where-Object {{ Test-Path -LiteralPath $_ }};"
             "if($ps){"
             f"Select-String -LiteralPath $ps -Encoding {encoding} {simple}-Pattern '{pat}'"
             # 포매터를 거치면 콘솔 폭에서 줄이 접히거나 잘린다 → 직접 stdout 출력
-            " | ForEach-Object { [Console]::Out.WriteLine($_.Line) }"
+            f" | ForEach-Object {{ [Console]::Out.WriteLine({emit}) }}"
             "}"
         )
 
-    def _grep_batches(self, paths, pat, regex, encoding):
+    def _grep_batches(self, paths, pat, regex, encoding, with_filename=False):
         """스크립트 길이 한도에 맞춰 경로를 나눈다."""
         batches, cur = [], []
         for p in paths:
             cur.append(p)
-            if len(self._grep_script(cur, pat, regex, encoding)) > self.MAX_SCRIPT:
+            if len(self._grep_script(cur, pat, regex, encoding, with_filename)) > self.MAX_SCRIPT:
                 if len(cur) == 1:          # 경로 하나만으로 한도 초과 — 그대로 시도
                     batches.append(cur)
                     cur = []
@@ -260,13 +269,15 @@ class ArsSshIO:
             batches.append(cur)
         return batches
 
-    def grep(self, server, paths, pattern, regex=True, encoding=None):
+    def grep(self, server, paths, pattern, regex=True, encoding=None,
+             with_filename=False):
         """서버측 Select-String 으로 매칭 라인만 회수.
 
         Args:
             paths: 로컬 경로 리스트 (존재하지 않는 경로는 무시됨)
             regex: True=.NET 정규식, False=리터럴(SimpleMatch)
             encoding: 파일 인코딩 지정. None 이면 utf8 → default(CP949) 순으로 시도
+            with_filename: True 이면 각 줄이 '경로<GREP_FILE_SEP>본문' 으로 온다
         Returns:
             (lines: list[str], error: str|None)
         """
@@ -278,8 +289,9 @@ class ArsSshIO:
 
         for enc in encs:
             lines = []
-            for batch in self._grep_batches(paths, pat, regex, enc):
-                rc, out, err = self._run_ps(server, self._grep_script(batch, pat, regex, enc))
+            for batch in self._grep_batches(paths, pat, regex, enc, with_filename):
+                rc, out, err = self._run_ps(
+                    server, self._grep_script(batch, pat, regex, enc, with_filename))
                 if rc != 0:
                     last_err = (err or '').strip()[:200] or f'PowerShell rc={rc}'
                     logger.warning("ARS grep 실패 (%s, 경로 %d개): %s",
@@ -339,12 +351,20 @@ class ArsSshLogFetcher(ArsLogFetcher):
                 continue
             # 날짜/시(HH) 전개 → 로컬 경로 후보
             candidates = [p for _, p in self._candidate_files(paths, dates)]
-            lines, err = self.io.grep(server, candidates, pattern, regex=True)
+            # with_filename=True: 서버 1대가 시(HH)별로 여러 파일을 보므로
+            # 어느 파일에서 나온 줄인지 결과에 같이 실어보낸다.
+            lines, err = self.io.grep(server, candidates, pattern, regex=True,
+                                      with_filename=True)
             if err:
                 self.errors.append({'server': label, 'error': 'SSH 검색 오류', 'details': err})
             for line in lines:
-                results.append({'line': line.strip(), 'server': label,
-                                'type': 'ARS', 'file': '', 'timestamp': _time_of_safe(line)})
+                path, body = ('', line)
+                if GREP_FILE_SEP in line:
+                    path, body = line.split(GREP_FILE_SEP, 1)
+                results.append({'line': body.strip(), 'server': label, 'type': 'ARS',
+                                'file': os.path.basename(path.replace('\\', '/')) if path else '',
+                                'file_path': path,
+                                'timestamp': _time_of_safe(body)})
         return {'success': True, 'pattern': pattern, 'result_count': len(results),
                 'results': results, 'errors': self.errors or None}
 
