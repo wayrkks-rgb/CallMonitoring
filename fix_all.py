@@ -575,8 +575,9 @@ def _main(args, report):
     if not args.no_index_reset and not args.check_only:
         hr("3. ARS 색인 복구")
         try:
-            from ars_index_store import get_default_store
+            from ars_index_store import get_default_store, DEFAULT_DB_PATH
             store = get_default_store()
+            print(f"  색인 DB : {DEFAULT_DB_PATH}")
             with store._lock:
                 n = store._conn.execute(
                     "SELECT COUNT(*) FROM scan_state "

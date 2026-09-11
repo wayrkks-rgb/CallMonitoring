@@ -15,6 +15,7 @@ ars_index_store.py — ARS 콜 인덱스 저장소 (SQLite)
   - ucid UNIQUE → 준실시간 재스캔 시 UPSERT 로 중복/갱신 안전
 """
 
+import os
 import sqlite3
 import threading
 import logging
@@ -22,7 +23,11 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DB_PATH = 'ars_index.db'
+# 상대 경로면 '실행 시 작업 디렉터리' 기준이 되어, 웹앱을 서비스로 띄우거나
+# 다른 폴더에서 실행하면 엉뚱한 위치에 빈 DB 가 새로 생긴다(색인은 도는데
+# 조회는 빈 DB 를 보는 상황). 항상 프로젝트 폴더 기준으로 고정한다.
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               'ars_index.db')
 RETENTION_DAYS = 30
 
 _SCHEMA = """
