@@ -222,10 +222,32 @@ class ArsIndexer:
                 worked |= self._scan_and_store(server, label, prev_path, pds, seal=seal)
         return worked
 
+    def _unseal_if_grown(self, server, label, path, st):
+        """확정된 파일이 실제로는 더 크면 확정을 풀고 이어 읽게 한다.
+
+        확정(sealed)은 '끝까지 읽었다'는 뜻이어야 하는데, 예전 버전은 읽기가
+        중간에 끊겨도 확정해 버렸다(그때 박제된 상태가 지금도 DB 에 남아 있다).
+        그런 파일은 스크립트로 일일이 풀어 주지 않으면 영영 복구되지 않으므로,
+        색인기가 만날 때마다 스스로 검사해서 되살린다.
+
+        returns: True 면 확정을 풀었으니 계속 읽어도 된다
+        """
+        last = st.get('last_offset') or 0
+        size, status = self._stat(server, path)
+        if status != 'ok' or size is None or size <= last:
+            return False          # 없는 파일이거나 정말로 다 읽은 파일
+        logger.warning("확정 해제(덜 읽힌 파일): %s  %s/%s 바이트",
+                       os.path.basename(path), last, size)
+        self.store.set_scan_state(path, last, st.get('pending_offset') or 0,
+                                  sealed=0, server=label)
+        return True
+
     def _scan_and_store(self, server, label, path, file_date, seal):
         st = self.store.get_scan_state(path)
         if st and st.get('sealed'):
-            return False
+            if not self._unseal_if_grown(server, label, path, st):
+                return False
+            st = self.store.get_scan_state(path)
         start = st['pending_offset'] if st else 0
         last = st['last_offset'] if st else 0
 
@@ -402,7 +424,10 @@ class ArsIndexer:
         server, label, path, ds = self._backfill.popleft()
         st = self.store.get_scan_state(path)
         if st and st.get('sealed'):
-            return True  # 이미 완료 → 진행(대기 불필요)
+            # 확정돼 있어도 실제 파일이 더 크면 덜 읽은 것 → 이어서 읽는다
+            if not self._unseal_if_grown(server, label, path, st):
+                return True  # 이미 완료 → 진행(대기 불필요)
+            st = self.store.get_scan_state(path)
 
         if not self._is_ssh(server):
             # UNC 모드만 호스트 연결 보장

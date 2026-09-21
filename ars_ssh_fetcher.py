@@ -184,14 +184,22 @@ class ArsSshIO:
         """
         if length is None or length <= 0:
             return b''
+        # Stream.Read 는 요청한 만큼을 다 주지 않아도 되는 API다(짧게 돌려줄 수
+        # 있다). 한 번만 부르면 8MB 청크가 조각나서 돌아오고, 호출측은 그걸
+        # '파일이 줄었다/읽기가 끊겼다'로 오해한다. EOF 이거나 다 채울 때까지 돈다.
         script = (
             "$ErrorActionPreference='Stop';"
             f"$f=[IO.File]::Open('{path}',[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite);"
             "try{"
             f"[void]$f.Seek([long]{int(offset or 0)},[IO.SeekOrigin]::Begin);"
             f"$b=New-Object byte[] {int(length)};"
-            "$n=$f.Read($b,0,$b.Length);"
-            "[Convert]::ToBase64String($b,0,$n)"
+            "$t=0;"
+            "while($t -lt $b.Length){"
+            "$r=$f.Read($b,$t,$b.Length-$t);"
+            "if($r -le 0){break};"
+            "$t+=$r"
+            "};"
+            "[Convert]::ToBase64String($b,0,$t)"
             "}finally{$f.Close()}"
         )
         rc, out, err = self._run_ps(server, script, timeout=self.read_timeout)
