@@ -94,7 +94,8 @@ def main():
 
     running = find_running_apps()
     if running is None:
-        print("실행 중인 앱 : (psutil 이 없어 확인 불가)")
+        print("실행 중인 앱 : (psutil 이 없어 프로세스 확인 불가)")
+        print("               → 대신 list_routes.py 를 실행하세요")
     elif not running:
         print("실행 중인 앱 : 없음 (웹 서버가 꺼져 있습니다)")
     else:

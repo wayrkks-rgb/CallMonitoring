@@ -3,9 +3,16 @@
 """시스템 관련 라우트 — 시스템 통계, 설정 조회"""
 
 from flask import Blueprint, jsonify
-import psutil
 import logging
 from datetime import datetime
+
+# psutil 은 시스템 통계(CPU/메모리/디스크)에만 쓴다. 없다고 해서 이 모듈
+# 전체가 import 실패하면 /version, /config 까지 통째로 사라져(404) 원인을
+# 찾을 방법이 없어진다. 없으면 통계만 포기한다.
+try:
+    import psutil
+except ImportError:                     # pragma: no cover - 환경 의존
+    psutil = None
 
 from config_manager import load_config
 
@@ -19,6 +26,16 @@ def get_system_stats():
     """시스템 통계 (CPU, 메모리, 디스크)"""
     try:
         from app import APP_START_TIME, TOTAL_SEARCHES
+
+        if psutil is None:
+            uptime = datetime.now() - APP_START_TIME
+            return jsonify({
+                'success': True,
+                'cpu_percent': None, 'memory_percent': None, 'disk_percent': None,
+                'total_searches': TOTAL_SEARCHES,
+                'uptime': str(uptime).split('.')[0],
+                'note': 'psutil 미설치 — 시스템 통계만 표시되지 않습니다',
+            })
 
         cpu_percent = psutil.cpu_percent(interval=0)
         memory = psutil.virtual_memory()
