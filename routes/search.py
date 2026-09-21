@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from log_searcher import LogSearcher
 from ars_fetcher import ArsLogFetcher
 from ars_ssh_fetcher import ArsSshLogFetcher
-from config_manager import validate_date_format
+from config_manager import validate_date_format, load_config, get_enabled_servers
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +128,25 @@ def _parse_common(data):
         if not isinstance(server_ids, list) or len(server_ids) == 0:
             return None, {'success': False, 'message': '검색할 서버를 선택하세요'}
         server_ids = [int(sid) for sid in server_ids]
+
+    # 설정을 못 읽으면 get_enabled_servers() 가 빈 리스트를 돌려주고, 검색기는
+    # '대상 서버 0대'로 조용히 빈 결과를 낸다. 화면엔 '결과 없음'만 떠서
+    # 로그가 없는 건지 설정이 깨진 건지 구분할 수 없다 — 여기서 잘라낸다.
+    if not load_config():
+        return None, {
+            'success': False,
+            'message': 'config.json 을 읽지 못해 검색 대상 서버가 없습니다. '
+                       '설정 파일이 손상됐을 수 있습니다 — '
+                       'python diag_servers.py 로 확인하세요',
+        }
+
+    # 선택 조건에 맞는 활성 서버가 하나도 없으면 그것도 '결과 없음'과 구분한다.
+    if not get_enabled_servers(server_ids=server_ids):
+        return None, {
+            'success': False,
+            'message': '선택한 조건에 해당하는 활성 서버가 없습니다 '
+                       '(서버 관리에서 사용 여부와 로그 경로를 확인하세요)',
+        }
 
     return {
         'start_date': start_date or None,
