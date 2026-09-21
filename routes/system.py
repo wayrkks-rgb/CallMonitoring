@@ -40,6 +40,44 @@ def get_system_stats():
         return jsonify({'success': False, 'error': str(e)})
 
 
+@system_bp.route('/version', methods=['GET'])
+def get_version():
+    """지금 '실행 중인' 코드가 최신인지 점검.
+
+    디스크의 파일이 아니라 이미 import 된 모듈의 소스를 본다. 폐쇄망에서
+    일부 폴더만 덮어써져 예전 코드가 도는 경우를 확실히 잡아낸다.
+    브라우저에서 /version 으로 바로 열어볼 수 있다.
+    """
+    try:
+        import build_info
+        info = build_info.collect()
+
+        lines = [f"빌드 : {info['build']}", ""]
+        for it in info['items']:
+            mark = '최신 ' if it['ok'] else ('★옛날' if it['ok'] is False else '  ?  ')
+            lines.append(f"[{mark}] {it['module']:<20} {it.get('mtime', '')}")
+            if it['ok'] is False:
+                lines.append(f"          빠짐: {it['why']}")
+            if it.get('detail'):
+                lines.append(f"          {it['detail']}")
+        lines.append("")
+        if info['up_to_date']:
+            lines.append("▶ 실행 중인 코드는 모두 최신입니다.")
+        else:
+            lines.append("▶ 아래 파일이 예전 것입니다. 덮어쓰고 재기동하세요:")
+            for m in info['stale_modules']:
+                lines.append(f"    {m.replace('.', '/')}.py")
+            lines.append("")
+            lines.append("  ※ zip 을 풀 때 routes/ templates/ static/ 폴더까지")
+            lines.append("     통째로 덮어쓰는지 확인하세요.")
+
+        from flask import Response
+        return Response("\n".join(lines), mimetype='text/plain; charset=utf-8')
+    except Exception as e:
+        logger.exception(f"버전 점검 오류: {e}")
+        return jsonify({'success': False, 'error': str(e)})
+
+
 @system_bp.route('/config', methods=['GET'])
 def get_config():
     """설정 조회"""

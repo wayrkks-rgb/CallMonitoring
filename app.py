@@ -148,6 +148,15 @@ if __name__ == '__main__':
     logger.info(f"포트: HTTP {HTTP_PORT}")
     logger.info(f"접속 주소: http://localhost:{HTTP_PORT}")
 
+    # 지금 '실행 중인' 코드가 최신인지 점검해 로그에 남긴다.
+    # (반입 때 일부 폴더가 덮어써지지 않아 예전 코드가 도는 경우를 잡는다.
+    #  브라우저에서 /version 으로도 볼 수 있다)
+    try:
+        import build_info
+        build_info.log_summary(logger)
+    except Exception as e:
+        logger.warning(f"빌드 점검 생략: {e}")
+
     # ARS 인덱서 백그라운드 시작 (debug=False 라 리로더 중복 기동 없음)
     import atexit
     ars_indexer_instance.start()

@@ -131,11 +131,22 @@ class ArsIndexer:
             logger.exception("백필 초기화 오류: %s", e)
             return
         # 남은 파일을 연속 처리 (대기 없음). 완료되면 스레드 종료.
+        # 30일치면 파일이 수천 개고 원격 읽기는 한 번에 하나씩이라 몇 시간이
+        # 걸린다. 진척을 남기지 않으면 '멈춘 건지 도는 건지' 알 수가 없다.
+        total = len(self._backfill)
+        done = 0
+        last_report = time.time()
         while not self._stop.is_set() and self._backfill:
             try:
                 r = self._do_one_backfill()
                 if r == 'retry':
                     self._stop.wait(self.poll)  # 연결 실패 → 잠깐 쉬고 재시도
+                else:
+                    done += 1
+                if time.time() - last_report >= 60:
+                    last_report = time.time()
+                    logger.info("ARS 백필 진행: %d/%d 처리, %d개 남음",
+                                done, total, len(self._backfill))
             except Exception as e:
                 self.last_error = str(e)
                 logger.exception("백필 처리 오류: %s", e)
