@@ -56,8 +56,57 @@ CHECKS = [
 ]
 
 
+def find_running_apps():
+    """실행 중인 웹앱(app.py)의 폴더를 찾는다.
+
+    '파일은 덮어썼는데 증상 그대로'의 가장 흔한 원인은, 지금 돌고 있는 앱이
+    파일을 덮어쓴 폴더가 '아닌' 다른 폴더에서 실행 중인 경우다. 스크립트를
+    둔 폴더만 검사해서는 절대 알 수 없으므로 프로세스를 직접 찾는다.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return None            # psutil 없음 → 판정 불가
+    found = []
+    for p in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            cmd = p.info.get('cmdline') or []
+            if not any('app.py' in str(c) for c in cmd):
+                continue
+            if not any('python' in str(c).lower() for c in cmd[:1] + [p.info.get('name') or '']):
+                continue
+            # app.py 의 실제 경로를 인자에서 뽑는다(상대경로면 cwd 기준)
+            target = next((str(c) for c in cmd if 'app.py' in str(c)), '')
+            try:
+                cwd = p.cwd()
+            except Exception:
+                cwd = ''
+            path = target if os.path.isabs(target) else os.path.join(cwd, target)
+            found.append({'pid': p.info['pid'], 'dir': os.path.dirname(os.path.abspath(path)),
+                          'cwd': cwd})
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return found
+
+
 def main():
-    print(f"설치 위치 : {BASE}\n")
+    print(f"이 스크립트가 검사하는 폴더 : {BASE}")
+
+    running = find_running_apps()
+    if running is None:
+        print("실행 중인 앱 : (psutil 이 없어 확인 불가)")
+    elif not running:
+        print("실행 중인 앱 : 없음 (웹 서버가 꺼져 있습니다)")
+    else:
+        for r in running:
+            same = os.path.normcase(os.path.abspath(r['dir'])) == \
+                   os.path.normcase(os.path.abspath(BASE))
+            mark = "같은 폴더" if same else "★ 다른 폴더 ★"
+            print(f"실행 중인 앱 : PID {r['pid']}  {r['dir']}   [{mark}]")
+            if not same:
+                print("               ↑ 여기에 파일을 덮어써야 합니다!")
+                print(f"               (지금 덮어쓴 곳: {BASE})")
+    print()
     missing_files, stale = [], []
 
     by_file = {}
