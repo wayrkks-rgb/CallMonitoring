@@ -217,6 +217,24 @@ def delete_server(server_id):
         if server_id < 0 or server_id >= len(servers):
             return jsonify({'success': False, 'error': '서버를 찾을 수 없음'})
 
+        # 서버는 목록 '순번'으로 지운다. 화면 목록이 낡아 있으면(다른 탭에서
+        # 추가/삭제했거나 새로고침 전) 엉뚱한 서버가 지워진다. 화면이 알고 있던
+        # 식별자를 같이 받아 실제 대상과 맞는지 확인한다.
+        data = request.get_json(silent=True) or {}
+        expect = data.get('expect') or {}
+        if expect:
+            target = servers[server_id]
+            for field in ('ip', 'hostname', 'label'):
+                if field in expect and (expect.get(field) or '') != (target.get(field) or ''):
+                    return jsonify({
+                        'success': False,
+                        'error': f'화면 목록이 최신이 아닙니다. '
+                                 f'[{server_id}]번은 지금 '
+                                 f'{get_server_label(target)} 입니다 — '
+                                 f'새로고침 후 다시 시도하세요',
+                        'stale': True,
+                    })
+
         deleted_server = servers.pop(server_id)
         config['remote_servers'] = servers
 

@@ -11,7 +11,7 @@ inspect 로 실행 중인 모듈의 소스를 직접 읽으므로, 어느 경로
 지금 돌고 있는 코드가 그 수정을 담고 있는지 확실하게 판정된다.
 """
 
-BUILD = '2026-09-21 / config 원자적 저장 + 확정 자동재개 + 서버등록 upsert'
+BUILD = '2026-09-21 b / 유령 항목 표시 + 삭제 대상 검증'
 
 # (모듈명, 표식, 없으면 무엇이 안 고쳐진 것인지)
 MARKERS = [
@@ -19,6 +19,8 @@ MARKERS = [
      "서버 재등록이 갱신(upsert)으로 동작 — 없으면 '중복'으로 막힌다"),
     ('routes.servers', 'no-store',
      '서버 목록 캐시 금지'),
+    ('routes.servers', "'stale': True",
+     '낡은 화면 목록으로 엉뚱한 서버가 삭제되는 것 방지'),
     ('config_manager', 'os.replace',
      'config.json 원자적 저장'),
     ('config_manager', '_recover_from_backup',

@@ -2111,6 +2111,11 @@
                                 ${server.ip ? `<div>IP: ${server.ip}</div>` : ''}
                                 ${showConn ? `<div>사용자: ${server.user || 'loguser'}</div><div>포트: ${server.ssh_port || 22}</div>` : ''}
                                 <div>로그 경로: 인바운드 ${inCnt} · 아웃바운드 ${outCnt}</div>
+                                ${(inCnt + outCnt) === 0 ? `
+                                <div style="margin-top:6px; padding:6px 10px; background:#fff4e6; border:1px solid #ffd8a8; border-radius:6px; color:#d9480f; font-size:12px;">
+                                    ⚠ 로그 경로가 없어 검색·색인에 쓰이지 않습니다.
+                                    이 항목 때문에 같은 IP/호스트명으로는 새로 추가할 수 없습니다.
+                                </div>` : ''}
                             </div>
                             <div class="server-actions">
                                 <button class="btn btn-primary" onclick="editServer(${server.id})">
@@ -2413,12 +2418,28 @@
         }
 
         async function deleteServer(serverId) {
-            if (!confirm('정말 이 서버를 삭제하시겠습니까?')) return;
+            const s = (_cachedServers || []).find(x => x.id === serverId) || {};
+            // 같은 이름으로 보이는 항목이 둘 이상일 수 있다(경로 없는 항목 등).
+            // 어느 것을 지우는지 IP/호스트명까지 보여준다.
+            const who = [s.display_name, s.ip && `IP ${s.ip}`, s.hostname && `호스트 ${s.hostname}`]
+                        .filter(Boolean).join(' · ');
+            if (!confirm(`이 서버를 삭제할까요?\n\n[${serverId}] ${who}`)) return;
             try {
-                const response = await fetch(`/servers/${serverId}`, { method: 'DELETE' });
+                const response = await fetch(`/servers/${serverId}`, {
+                    method: 'DELETE',
+                    headers: {'Content-Type': 'application/json'},
+                    // 화면 목록이 낡았으면 엉뚱한 서버가 지워진다 — 서버가 대조하도록
+                    // 지금 보고 있는 식별자를 함께 보낸다
+                    body: JSON.stringify({ expect: {
+                        ip: s.ip || '', hostname: s.hostname || '', label: s.label || ''
+                    }})
+                });
                 const data = await response.json();
                 if (data.success) { alert('서버가 삭제되었습니다'); loadServers(); }
-                else { alert('오류: ' + (data.error || '서버 삭제 실패')); }
+                else {
+                    alert('오류: ' + (data.error || '서버 삭제 실패'));
+                    if (data.stale) loadServers();   // 최신 목록으로 갱신
+                }
             } catch (error) { alert('오류: ' + error.message); }
         }
 
