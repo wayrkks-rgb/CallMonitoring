@@ -34,7 +34,7 @@ def get_servers():
     try:
         config = load_config()
         if not config:
-            return jsonify({'success': False, 'error': '설정 로드 실패'})
+            return jsonify({'success': False, 'error': 'config.json 을 읽지 못했습니다. 파일이 손상됐을 수 있습니다 — python diag_servers.py 로 상태를 확인하세요'})
 
         servers = config.get('remote_servers', [])
         server_list = []
@@ -79,7 +79,7 @@ def add_server():
 
         config = load_config()
         if not config:
-            return jsonify({'success': False, 'error': '설정 로드 실패'})
+            return jsonify({'success': False, 'error': 'config.json 을 읽지 못했습니다. 파일이 손상됐을 수 있습니다 — python diag_servers.py 로 상태를 확인하세요'})
 
         server_type = validated['type']
 
@@ -165,7 +165,7 @@ def update_server(server_id):
 
         config = load_config()
         if not config:
-            return jsonify({'success': False, 'error': '설정 로드 실패'})
+            return jsonify({'success': False, 'error': 'config.json 을 읽지 못했습니다. 파일이 손상됐을 수 있습니다 — python diag_servers.py 로 상태를 확인하세요'})
 
         servers = config.get('remote_servers', [])
         if server_id < 0 or server_id >= len(servers):
@@ -211,7 +211,7 @@ def delete_server(server_id):
     try:
         config = load_config()
         if not config:
-            return jsonify({'success': False, 'error': '설정 로드 실패'})
+            return jsonify({'success': False, 'error': 'config.json 을 읽지 못했습니다. 파일이 손상됐을 수 있습니다 — python diag_servers.py 로 상태를 확인하세요'})
 
         servers = config.get('remote_servers', [])
         if server_id < 0 or server_id >= len(servers):
@@ -250,7 +250,7 @@ def get_server_log_paths(server_id):
     try:
         config = load_config()
         if not config:
-            return jsonify({'success': False, 'error': '설정 로드 실패'})
+            return jsonify({'success': False, 'error': 'config.json 을 읽지 못했습니다. 파일이 손상됐을 수 있습니다 — python diag_servers.py 로 상태를 확인하세요'})
 
         servers = config.get('remote_servers', [])
         if server_id < 0 or server_id >= len(servers):
@@ -301,7 +301,7 @@ def add_log_path(server_id):
 
         config = load_config()
         if not config:
-            return jsonify({'success': False, 'error': '설정 로드 실패'})
+            return jsonify({'success': False, 'error': 'config.json 을 읽지 못했습니다. 파일이 손상됐을 수 있습니다 — python diag_servers.py 로 상태를 확인하세요'})
 
         servers = config.get('remote_servers', [])
         if server_id < 0 or server_id >= len(servers):
@@ -343,7 +343,7 @@ def delete_log_path(server_id):
 
         config = load_config()
         if not config:
-            return jsonify({'success': False, 'error': '설정 로드 실패'})
+            return jsonify({'success': False, 'error': 'config.json 을 읽지 못했습니다. 파일이 손상됐을 수 있습니다 — python diag_servers.py 로 상태를 확인하세요'})
 
         servers = config.get('remote_servers', [])
         if server_id < 0 or server_id >= len(servers):

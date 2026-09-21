@@ -67,9 +67,22 @@ def main():
         print(f"              {os.path.getsize(cfg_path):,}바이트 · "
               f"수정 {__import__('datetime').datetime.fromtimestamp(os.path.getmtime(cfg_path)):%Y-%m-%d %H:%M:%S}")
 
+    # 백업/손상본 현황 — '설정 로드 실패'가 났던 적이 있는지 바로 보인다
+    from pathlib import Path
+    backups = sorted(Path(BASE).glob("config.json.backup_*"), reverse=True)
+    corrupts = sorted(Path(BASE).glob("config.json.corrupt_*"), reverse=True)
+    print(f"백업        : {len(backups)}벌"
+          + (f"  (최신 {backups[0].name})" if backups else "  ★ 없음"))
+    if corrupts:
+        print(f"손상 이력   : ★ {len(corrupts)}건 — {', '.join(c.name for c in corrupts[:3])}")
+        print("              (동시 쓰기로 깨졌던 흔적입니다. 백업에서 자동 복구됩니다)")
+
     config = load_config()
     if not config:
-        print("★ 설정을 읽지 못했습니다 (JSON 문법 오류일 수 있습니다)")
+        print("\n★ 설정을 읽지 못했고 쓸 수 있는 백업도 없습니다.")
+        print("  config.json 을 직접 열어 JSON 문법을 확인하거나,")
+        print("  config.json.corrupt_* / config.json.backup_* 중 정상인 것을")
+        print("  config.json 으로 복사하세요.")
         return
     servers = config.get("remote_servers", [])
 
