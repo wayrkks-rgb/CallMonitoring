@@ -54,7 +54,8 @@ def main():
     ap.add_argument("--dedupe", action="store_true",
                     help="같은 IP/호스트/라벨을 가진 항목을 하나로 병합")
     ap.add_argument("--drop-empty", action="store_true",
-                    help="로그 경로·접속정보가 모두 비어 있는 껍데기 항목 삭제")
+                    help="로그 경로가 하나도 없는 항목 삭제 "
+                         "(예전 키 등록이 만들어 둔 항목 — 서버 추가를 '중복'으로 막는 원인)")
     args = ap.parse_args()
 
     from config_manager import (load_config, save_config, normalize_log_paths,
@@ -128,22 +129,48 @@ def main():
             groups[(field, v)].append(i)
     dups = {k: v for k, v in groups.items() if len(v) > 1}
     if not dups:
-        print("  중복 없음 — 같은 값을 다시 등록하면 그 항목이 갱신됩니다(정상)")
+        print("  항목끼리 겹치는 값은 없습니다.")
     for (field, v), idxs in sorted(dups.items()):
         names = ", ".join(f"[{i}] {get_server_label(servers[i])}" for i in idxs)
         print(f"  ★ {field} = {v}  →  {names}")
 
+    # ★ 여기가 핵심 ★
+    # 위는 '이미 등록된 것끼리' 겹치는지만 본다. 정작 사용자가 겪는 건
+    # '추가하려는 값이 기존 항목과 겹쳐서 막히는' 상황이다. 항목이 하나만
+    # 있으면 위에선 중복이 아니지만, 같은 값으로 추가하면 막힌다.
+    print("\n  서버를 '추가'할 때 막히는 값 (이 값으로는 새로 추가할 수 없습니다):")
+    blockers = sorted(groups.keys())
+    if not blockers:
+        print("    (없음 — 등록된 서버가 없습니다)")
+    for field, v in blockers:
+        owners = ", ".join(f"[{i}] {get_server_label(servers[i])}" for i in groups[(field, v)])
+        print(f"    {field:<9} {v:<22} ← {owners}")
+    print("\n    최신 코드에서는 막히지 않고 그 항목이 '갱신'됩니다.")
+    print("    '중복'이라는 오류가 뜬다면 예전 routes/servers.py 가 돌고 있는 것입니다")
+    print("    → 브라우저에서 /version 을 열어 확인하세요.")
+
     # ── 3) 껍데기 ──────────────────────────────────────────
+    # 로그 경로가 하나도 없으면 검색에도 색인에도 쓰이지 않는다. 그런데
+    # 서버 추가 때는 IP/호스트명이 겹친다고 막아서는 원인이 된다.
+    # (예전 키 등록이 만들어 둔 항목이 여기 해당한다 — 키는 있고 경로는 없다)
     empties = []
     for i, s in enumerate(servers):
         lp = normalize_log_paths(s.get("log_paths"))
-        if not lp["inbound"] and not lp["outbound"] and not s.get("ssh_key_path"):
+        if not lp["inbound"] and not lp["outbound"]:
             empties.append(i)
-    _hr("3. 껍데기 항목 (경로·키 모두 없음)")
+    _hr("3. 로그 경로가 없는 항목")
     if not empties:
         print("  없음")
-    for i in empties:
-        print(f"  ★ [{i}] {get_server_label(servers[i])}")
+    else:
+        print("  아래 항목은 로그 경로가 없어 검색·색인에 쓰이지 않습니다.")
+        print("  그런데 같은 IP/호스트명으로 서버를 '추가'하면 이 항목과 겹쳐")
+        print("  '중복'으로 막힙니다 — 2번에 중복이 안 떠도 그렇습니다.")
+        print("  (예전 버전의 SSH 키 등록이 자동으로 만들어 둔 항목입니다)\n")
+        for i in empties:
+            s = servers[i]
+            key = "키 있음" if s.get("ssh_key_path") else "키 없음"
+            print(f"  ★ [{i}] {get_server_label(s)}   "
+                  f"ip={s.get('ip') or '-'}  hostname={s.get('hostname') or '-'}  {key}")
 
     # ── 4) 정리 ────────────────────────────────────────────
     if not (args.dedupe or args.drop_empty):
