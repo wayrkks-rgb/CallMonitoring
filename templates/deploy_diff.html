@@ -131,6 +131,7 @@ code{background:#f0f2f5;padding:1px 5px;border-radius:4px;
   <button class="btn" id="re" title="캐시 무시하고 다시 수집·분석">강제 재분석</button>
   <button class="btn" id="cfgBtn" title="시나리오 경로/SSH 설정">⚙ 경로 설정</button>
   <span id="st" style="font-size:12.5px;color:var(--dim)"></span>
+  <span id="pv" style="margin-left:auto;font-size:11.5px;color:var(--dim)"></span>
 </header>
 
 <!-- 시나리오 경로 설정 (config.json 의 scenario_deploy 블록) -->
@@ -173,6 +174,9 @@ code{background:#f0f2f5;padding:1px 5px;border-radius:4px;
 
 <script>
 const $=s=>document.querySelector(s);
+// 이 화면 파일의 버전. 헤더에 표시되므로, 브라우저가 예전 화면을 쓰고
+// 있는지 눈으로 바로 확인할 수 있다(파일만 봐서는 알 수 없다).
+const PAGE_VERSION = '2026-09-22e';
 let REP=null, FILTER={flow:1,script:1,screen:1,struct:1,vars:1}, Q='';
 // 파일 펼침 제어. 변경 블록이 HEAVY_BLOCKS 를 넘으면 렌더가 무거워지므로
 // 그때만 앞 3개만 펼치고, '모두 펼치기'로 강제 전환할 수 있게 한다.
@@ -193,6 +197,7 @@ async function run(force){
   }catch(e){ $('#out').innerHTML='<div class="err">요청 실패: '+esc(e.message)+'</div>'; }
   finally{ b.disabled=r.disabled=false; }
 }
+showPageVersion();   // 브라우저가 어떤 화면 파일을 쓰는지 즉시 표시
 $('#go').onclick=()=>run(false);
 $('#re').onclick=()=>run(true);
 
@@ -234,6 +239,10 @@ $('#cfgSave').onclick=async()=>{
 
 function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
+function showPageVersion(){
+  const e=document.getElementById('pv');
+  if(e) e.textContent='화면 '+PAGE_VERSION;
+}
 function render(){
   const R=REP,S=R.summary,M=R.meta;
   let h='';
