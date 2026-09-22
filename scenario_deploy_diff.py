@@ -25,6 +25,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SCN_EXT = (".dxml", ".xml")
 MAX_DIFF_LINES = 400          # 블록당 스크립트 diff 라인 상한
 MAX_BLOCK_CHANGES = 4000      # 리포트 전체 블록 변경 상한(안전판)
+MAX_FULL_CHARS = 8000         # 리뷰용 '블록 전문'에 담을 스크립트 길이 상한
+
+# 스냅샷 캐시 구조/파서가 바뀌면 올린다. 올리지 않으면 예전 캐시가 그대로
+# 재사용돼서 파서를 고쳐도 반영되지 않는다(파일이 안 바뀌면 재파싱을 안 하므로).
+CACHE_VERSION = 3
 
 
 # ══════════════════════════════════════════════════════════════
@@ -57,8 +62,15 @@ def _js_value(rhs):
     def flush_expr():
         e = "".join(expr).strip()
         expr.clear()
-        if e and e not in ("+",):
-            out.append("{" + e.strip("+ \t") + "}")
+        if not e or e in ("+",):
+            return
+        e = e.strip("+ \t")
+        # 숫자·true/false·null 은 값 자체가 리터럴이다. {3} 처럼 식으로 감싸면
+        # 변수 비교 결과가 읽기 어려워진다.
+        if re.fullmatch(r"-?\d+(\.\d+)?|true|false|null", e, re.I):
+            out.append(e)
+        else:
+            out.append("{" + e + "}")
 
     while i < n:
         c = rhs[i]
@@ -285,13 +297,15 @@ def snapshot_folder_cached(folder, cache_path):
         try:
             with open(cache_path, "rb") as f:
                 cache = pickle.load(f)
+            if cache.get("__version__") != CACHE_VERSION:
+                cache = {}      # 파서가 바뀌었다 → 전부 다시 파싱
         except Exception:
             cache = {}
 
     files = []
     for ext in SCN_EXT:
         files += glob.glob(os.path.join(folder, "*" + ext))
-    snap, newcache = {}, {}
+    snap, newcache = {}, {"__version__": CACHE_VERSION}
     parsed = reused = 0
     for f in sorted(set(files)):
         key = os.path.basename(f).lower()
@@ -349,6 +363,92 @@ def _script_diff(old, new, title):
             lines.append("... (이하 생략)")
             break
     return {"title": title, "added": add, "removed": rem, "lines": lines}
+
+
+# ── 변수 대입 추출 (리뷰용: '무슨 값을 건드렸나') ──────────────
+# 줄 단위 diff 는 '어디가 달라졌나'는 보여주지만 '무슨 값을 바꿨나'는
+# 읽어내기 어렵다. 대입문만 뽑아 변수별로 비교하면 리뷰가 훨씬 빠르다.
+_ASSIGN = re.compile(r"^((?:app\.)?[A-Za-z_]\w*)\s*(\+?=)(?!=)\s*(.+)$")
+
+
+def _vars_of(script):
+    """스크립트의 변수 대입 → {변수명: [값, ...]} (대입 순서 유지)"""
+    out = {}
+    if not script:
+        return out
+    for line in _BLOCK_COMMENT.sub("", script).splitlines():
+        ls = line.strip()
+        if not ls or ls.startswith("//"):
+            continue
+        m = _ASSIGN.match(ls)
+        if not m:
+            continue
+        name, op, rhs = m.group(1), m.group(2), m.group(3)
+        # 화면 정의(WV_*)는 화면 비교에서 따로 다루므로 여기서는 제외
+        if name.replace("app.", "").startswith("WV_"):
+            continue
+        val = _js_value(rhs).rstrip(";").strip()
+        out.setdefault(name, []).append(("+=" if op == "+=" else "") + val)
+    return out
+
+
+def _var_changes(old_script, new_script):
+    """변수 단위 변경 목록. [{name, kind, from, to}]"""
+    ov, wv = _vars_of(old_script), _vars_of(new_script)
+    out = []
+    for k in wv:
+        if k not in ov:
+            out.append({"name": k, "kind": "added", "to": " / ".join(wv[k])})
+        elif ov[k] != wv[k]:
+            out.append({"name": k, "kind": "changed",
+                        "from": " / ".join(ov[k]), "to": " / ".join(wv[k])})
+    for k in ov:
+        if k not in wv:
+            out.append({"name": k, "kind": "removed", "from": " / ".join(ov[k])})
+    return out
+
+
+def _cap(s, n=MAX_FULL_CHARS):
+    s = s or ""
+    return s if len(s) <= n else s[:n] + "\n... (이하 생략)"
+
+
+def _block_full(b):
+    """리뷰용 블록 전문 — 흐름을 그대로 읽을 수 있게 전체를 담는다."""
+    if not b:
+        return None
+    return {
+        "seq": b.get("seq"), "label": b.get("label"), "type": b.get("type"),
+        "cond": b.get("cond"), "target": b.get("target"),
+        "target_node": b.get("target_node"), "result_case": b.get("result_case"),
+        "ret": b.get("ret"), "comment": b.get("comment"),
+        "prescript": _cap(b.get("prescript")),
+        "script": _cap(b.get("script")),
+        "screens": b.get("screens") or [],
+        "wv_meta": b.get("wv_meta") or {},
+    }
+
+
+def _neighbors(links, blocks, seq):
+    """이 블록의 들어오는/나가는 연결. [{seq, label, via}]"""
+    ins, outs = [], []
+    for lab, fs, ts in links or []:
+        if ts == seq:
+            ins.append({"seq": fs, "label": (blocks.get(fs) or {}).get("label", ""),
+                        "via": lab or ""})
+        if fs == seq:
+            outs.append({"seq": ts, "label": (blocks.get(ts) or {}).get("label", ""),
+                         "via": lab or ""})
+    return ins, outs
+
+
+def _page_index(snap):
+    """시나리오 페이지명(대소문자 무시) → 실제 파일명"""
+    idx = {}
+    for key, f in (snap or {}).items():
+        base = os.path.splitext(f["file"])[0]
+        idx[base.lower()] = f["file"]
+    return idx
 
 
 def _screen_key(s):
@@ -514,7 +614,7 @@ def diff_snapshots(old, new, locate=None):
             "files_added": 0, "files_removed": 0, "files_changed": 0, "files_same": 0,
             "blocks_added": 0, "blocks_removed": 0, "blocks_modified": 0,
             "flow_changes": 0, "script_changes": 0, "screen_changes": 0,
-            "link_changes": 0, "truncated": False,
+            "link_changes": 0, "var_changes": 0, "truncated": False,
         },
         "added_files": [], "removed_files": [], "files": [],
     }
@@ -546,9 +646,25 @@ def diff_snapshots(old, new, locate=None):
                  "link_changes": []}
 
         for s in added:
-            entry["added_blocks"].append(_block_brief(wb[s]))
+            b = _block_brief(wb[s])
+            # 새로 생긴 블록은 전문이 곧 '추가된 로직'이다
+            b["full"] = {"before": None, "after": _block_full(wb[s])}
+            v = (_vars_of(wb[s]["prescript"]), _vars_of(wb[s]["script"]))
+            newvars = []
+            for d in v:
+                for k, vals in d.items():
+                    newvars.append({"name": k, "kind": "added", "to": " / ".join(vals)})
+            if newvars:
+                b["vars"] = newvars
+            i_in, i_out = _neighbors(wf["links"], wb, s)
+            b["context"] = {"in": i_in, "out": i_out}
+            entry["added_blocks"].append(b)
         for s in removed:
-            entry["removed_blocks"].append(_block_brief(ob[s]))
+            b = _block_brief(ob[s])
+            b["full"] = {"before": _block_full(ob[s]), "after": None}
+            i_in, i_out = _neighbors(of["links"], ob, s)
+            b["context"] = {"in": i_in, "out": i_out}
+            entry["removed_blocks"].append(b)
 
         for s in common:
             o, w = ob[s], wb[s]
@@ -576,6 +692,19 @@ def diff_snapshots(old, new, locate=None):
                 S["screen_changes"] += 1
             if meta_chg:
                 ch["wv_meta"] = meta_chg
+
+            # ── 리뷰용 보강 ──
+            # 줄 diff 만으로는 '무슨 의도로 바꿨나'가 안 읽힌다.
+            # 변수 단위 변경 + 블록 전문 + 주변 연결을 함께 싣는다.
+            vch = (_var_changes(o["prescript"], w["prescript"])
+                   + _var_changes(o["script"], w["script"]))
+            if vch:
+                ch["vars"] = vch
+                S["var_changes"] = S.get("var_changes", 0) + len(vch)
+            ch["full"] = {"before": _block_full(o), "after": _block_full(w)}
+            i_in, i_out = _neighbors(wf["links"], wb, s)
+            ch["context"] = {"in": i_in, "out": i_out}
+
             entry["changed_blocks"].append(ch)
             total_changes += 1
 
@@ -615,6 +744,49 @@ def diff_snapshots(old, new, locate=None):
         if total_changes > MAX_BLOCK_CHANGES:
             S["truncated"] = True
             break
+
+    # ── 시나리오 간 연관 관계 ──────────────────────────────
+    # '이 시나리오를 건드리면 어디에 영향이 가는가'를 보여준다.
+    # 배포 전 리뷰에서 가장 중요한 정보다(호출하는 쪽을 놓쳐서 장애가 난다).
+    pidx = _page_index(new)
+    for entry in report["files"]:
+        wf = next((new[k] for k in new if new[k]["file"] == entry["file"]), None)
+        if not wf:
+            continue
+        me = os.path.splitext(entry["file"])[0].lower()
+
+        # 이 파일이 넘어가는 시나리오 (TargetPage)
+        goes = {}
+        for b in wf["blocks"].values():
+            t = (b.get("target") or "").strip()
+            if not t or t.lower() == me:
+                continue
+            goes.setdefault(pidx.get(t.lower(), t), set()).add(b["seq"])
+
+        # 이 파일로 넘어오는 시나리오 (다른 파일의 TargetPage 가 나를 가리킴)
+        comes = {}
+        for k, f in new.items():
+            if f["file"] == entry["file"]:
+                continue
+            for b in f["blocks"].values():
+                if (b.get("target") or "").strip().lower() == me:
+                    comes.setdefault(f["file"], set()).add(b["seq"])
+
+        # 변경된 블록을 직접 가리키는 곳 (TargetNodeId 기준)
+        touched = {b["seq"] for b in entry["changed_blocks"]} | \
+                  {b["seq"] for b in entry["added_blocks"]}
+        direct = {}
+        for k, f in new.items():
+            for b in f["blocks"].values():
+                tn = (b.get("target_node") or "").strip()
+                if tn and tn in touched and (b.get("target") or "").strip().lower() == me:
+                    direct.setdefault(f["file"], set()).add(f"{b['seq']}→{tn}")
+
+        entry["related"] = {
+            "goes_to": [{"file": f, "from_blocks": sorted(v)} for f, v in sorted(goes.items())],
+            "called_by": [{"file": f, "from_blocks": sorted(v)} for f, v in sorted(comes.items())],
+            "direct_refs": [{"file": f, "refs": sorted(v)} for f, v in sorted(direct.items())],
+        }
 
     # 영향받은 화면(보이는ARS) 목록 — 배포 리뷰용 상단 요약
     codes = {}

@@ -90,6 +90,29 @@ pre.diff .h{color:#8250df;display:block}
 .warn{background:#fff4d6;border:1px solid #f0d089;color:#7a5200;
   border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px;line-height:1.6}
 .hint{margin-left:auto;font-size:11.5px;color:var(--dim);white-space:nowrap}
+/* 리뷰용 — 연관 시나리오 / 블록 전문 */
+.rel{background:#f7f9fc;border:1px solid #dde3ec;border-radius:8px;
+  padding:10px 13px;margin:10px 0 4px}
+.rel .i{display:inline-block;margin:3px 7px 0 0;font-size:12px;background:#fff;
+  border:1px solid var(--line);padding:2px 9px;border-radius:12px}
+.rel .warnline{background:#fff4d6;border-radius:6px;padding:5px 8px;margin-top:5px}
+.rel .warnline b{color:#7a5200}
+.sl2{font-size:11px;font-weight:700;color:var(--dim);margin:8px 0 3px}
+details.full{margin-top:10px}
+details.full>summary{cursor:pointer;font-size:12.5px;color:var(--flow);
+  padding:5px 0;user-select:none}
+.fullwrap{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:6px}
+@media(max-width:820px){.fullwrap{grid-template-columns:1fr}}
+.fullcol{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff}
+.fcap{font-size:11.5px;font-weight:700;padding:5px 10px;text-align:center}
+.fcap.before{background:var(--delbg);color:var(--del)}
+.fcap.after{background:var(--addbg);color:var(--add)}
+.fbody{padding:9px 11px}
+pre.code{background:#fafbfc;border:1px solid var(--line);border-radius:6px;
+  padding:8px 10px;overflow:auto;max-height:260px;margin:3px 0 0;
+  font:11.5px/1.55 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-all}
+code{background:#f0f2f5;padding:1px 5px;border-radius:4px;
+  font:12px ui-monospace,Consolas,monospace}
 .spin{display:inline-block;width:13px;height:13px;border:2px solid #fff;
   border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;
   vertical-align:-2px;margin-right:6px}
@@ -150,7 +173,7 @@ pre.diff .h{color:#8250df;display:block}
 
 <script>
 const $=s=>document.querySelector(s);
-let REP=null, FILTER={flow:1,script:1,screen:1,struct:1}, Q='';
+let REP=null, FILTER={flow:1,script:1,screen:1,struct:1,vars:1}, Q='';
 // 파일 펼침 제어. 변경 블록이 HEAVY_BLOCKS 를 넘으면 렌더가 무거워지므로
 // 그때만 앞 3개만 펼치고, '모두 펼치기'로 강제 전환할 수 있게 한다.
 const HEAVY_BLOCKS = 400;
@@ -237,6 +260,7 @@ function render(){
     +card(S.blocks_removed,'삭제 블록','del')
     +card(S.flow_changes,'흐름 변화','flow')
     +card(S.screen_changes,'화면 변경','scr')
+    +card(S.var_changes||0,'변수 · 값 변경','mod')
     +'</div>';
 
   if(R.screens_touched && R.screens_touched.length){
@@ -254,7 +278,7 @@ function render(){
 
   h+='<div class="bar">'
     +chip('flow','업무 흐름')+chip('script','함수처리')+chip('screen','보이는ARS 화면')
-    +chip('struct','블록 추가·삭제')
+    +chip('struct','블록 추가·삭제')+chip('vars','변수 · 값')
     +'<input class="f" id="q" placeholder="시나리오/블록 검색" value="'+esc(Q)+'">'
     +'<button class="btn" id="ex">'+(EXPAND_ALL?'모두 접기':'모두 펼치기')+'</button></div>';
 
@@ -324,10 +348,26 @@ function fileHtml(f,i){
   const openByDefault = (EXPAND_ALL || i < OPEN_LIMIT);
   return '<div class="file'+(openByDefault?' open':'')+'"><div class="fh"><span class="fn">'+esc(f.file)+'</span>'+tags
     + (openByDefault?'':'<span class="hint">클릭하여 내용 보기</span>')
-    +'</div><div class="fb">'+blocks+'</div></div>';
+    +'</div><div class="fb">'+relHtml(f)+blocks+'</div></div>';
 }
 function match(f,b,q){ if(!q) return true;
   return (f.file+' '+(b.label||'')+' '+(b.seq||'')).toLowerCase().includes(q); }
+
+// 이 시나리오를 건드리면 어디에 영향이 가는가 — 배포 리뷰의 핵심
+function relHtml(f){
+  const r=f.related; if(!r) return '';
+  const list=(arr,key)=>(arr||[]).map(x=>'<span class="i">'+esc(x.file)
+      +' <span class="w">('+(x[key]||[]).join(', ')+')</span></span>').join('');
+  const a=list(r.called_by,'from_blocks'), b=list(r.goes_to,'from_blocks'),
+        c=list(r.direct_refs,'refs');
+  if(!a && !b && !c) return '';
+  let h='<div class="rel"><div class="sl">연관 시나리오 — 이 파일을 바꾸면 함께 확인할 곳</div>';
+  if(a) h+='<div class="ch"><span class="w">이 시나리오를 호출 →</span> '+a+'</div>';
+  if(b) h+='<div class="ch"><span class="w">여기서 넘어가는 곳 →</span> '+b+'</div>';
+  if(c) h+='<div class="ch warnline"><span class="w">변경된 블록을 직접 지목 →</span> '+c
+        +' <b>영향 확인 필요</b></div>';
+  return h+'</div>';
+}
 
 function briefHtml(b,kind){
   let h='<div class="blk b-'+kind+'"><div class="bt"><span class="tag t-'+kind+'">'
@@ -342,6 +382,8 @@ function briefHtml(b,kind){
       (s.code||'')+(s.name?' · '+s.name:''),s.title,[],s.buttons||[]));
     h+='</div></div>';
   }
+  // 추가/삭제된 블록도 전문과 흐름 위치를 함께 — 새로 넣은 로직을 읽을 수 있게
+  h+=varsHtml(b)+ctxHtml(b)+fullHtml(b);
   return h+'</div>';
 }
 function loc(l){
@@ -349,8 +391,59 @@ function loc(l){
   return '<div class="loc">업무 위치: '+esc(p)+(l.step_title?' · STEP '+l.step_no+' '+esc(l.step_title):'')+'</div>';
 }
 
+// 변수 단위 변경 — '무슨 값을 건드렸나'. 줄 diff 보다 먼저 보여준다.
+function varsHtml(b){
+  if(!FILTER.vars || !b.vars || !b.vars.length) return '';
+  const K={added:['추가','t-add'],removed:['삭제','t-del'],changed:['변경','t-mod']};
+  let s='';
+  b.vars.forEach(v=>{
+    const k=K[v.kind]||['변경','t-mod'];
+    s+='<div class="ch"><span class="tag '+k[1]+'">'+k[0]+'</span> '
+      +'<code>'+esc(v.name)+'</code> ';
+    if(v.kind==='changed') s+='<span class="old">'+esc(v.from)+'</span> → <span class="new">'+esc(v.to)+'</span>';
+    else if(v.kind==='added') s+='= <span class="new">'+esc(v.to)+'</span>';
+    else s+='<span class="old">'+esc(v.from)+'</span>';
+    s+='</div>';
+  });
+  return '<div class="sec"><div class="sl">변수 · 값 변경</div>'+s+'</div>';
+}
+
+// 이 블록의 앞뒤 연결 — 흐름상 어디에 끼어 있는지
+function ctxHtml(b){
+  const c=b.context; if(!c) return '';
+  const fmt=a=>(a||[]).map(x=>esc(x.label||'')+' <span class="seq">'+esc(x.seq)+'</span>'
+      +(x.via?' <span class="w">['+esc(x.via)+']</span>':'')).join(' , ') || '<span class="w">없음</span>';
+  return '<div class="sec"><div class="sl">흐름 위치</div>'
+    +'<div class="ch"><span class="w">이 블록으로 ←</span> '+fmt(c.in)+'</div>'
+    +'<div class="ch"><span class="w">이 블록에서 →</span> '+fmt(c.out)+'</div></div>';
+}
+
+// 블록 전문 — 변경 전/후를 통째로. 리뷰어가 흐름을 그대로 읽을 수 있게.
+function fullHtml(b){
+  const f=b.full; if(!f) return '';
+  const one=(x,cap,cls)=>{
+    if(!x) return '<div class="fullcol"><div class="fcap '+cls+'">'+cap+'</div>'
+      +'<div class="w" style="padding:8px">(없음)</div></div>';
+    let r='<div class="fullcol"><div class="fcap '+cls+'">'+cap+'</div><div class="fbody">';
+    const row=(k,v)=>v?'<div class="ch"><span class="w">'+k+'</span> '+esc(v)+'</div>':'';
+    r+=row('블록명',x.label)+row('종류',x.type)+row('주석',x.comment);
+    r+=row('조건',x.cond)+row('이동 대상',x.target)+row('이동 노드',x.target_node);
+    r+=row('ResultCase',x.result_case)+row('반환',x.ret);
+    if(x.prescript) r+='<div class="sl2">PreScript</div><pre class="code">'+esc(x.prescript)+'</pre>';
+    if(x.script) r+='<div class="sl2">Script</div><pre class="code">'+esc(x.script)+'</pre>';
+    const wm=Object.keys(x.wv_meta||{});
+    if(wm.length){ r+='<div class="sl2">화면 변수</div>';
+      wm.sort().forEach(k=>r+='<div class="ch"><span class="w">'+esc(k)+'</span> '+esc(x.wv_meta[k])+'</div>'); }
+    return r+'</div></div>';
+  };
+  return '<details class="full"><summary>블록 전문 보기 (변경 전 / 변경 후)</summary>'
+    +'<div class="fullwrap">'+one(f.before,'변경 전','before')+one(f.after,'변경 후','after')
+    +'</div></details>';
+}
+
 function changeHtml(b){
   let inner='';
+  inner+=varsHtml(b);
   if(FILTER.flow && b.flow){
     let s='';
     b.flow.forEach(c=>{ s+='<div class="ch"><span class="w">'+esc(c.what)+'</span> '
@@ -392,9 +485,10 @@ function changeHtml(b){
   if(b.flow) h+='<span class="tag t-flow">흐름</span>';
   if(b.screen) h+='<span class="tag t-scr">화면</span>';
   if(b.scripts) h+='<span class="tag t-mod">함수</span>';
+  if(b.vars) h+='<span class="tag t-mod">변수 '+b.vars.length+'</span>';
   h+='</div>';
   if(b.location) h+=loc(b.location);
-  return h+inner+'</div>';
+  return h+inner+ctxHtml(b)+fullHtml(b)+'</div>';
 }
 
 function phone(s,cls,cap,title,texts,btns){
