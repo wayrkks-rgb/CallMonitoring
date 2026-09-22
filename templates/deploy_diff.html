@@ -150,8 +150,10 @@ code{background:#f0f2f5;padding:1px 5px;border-radius:4px;
       <input id="c_new" style="width:100%;padding:7px;border:1px solid #ccd2db;border-radius:6px;"></label>
     <label>과거 폴더명
       <input id="c_old" style="width:100%;padding:7px;border:1px solid #ccd2db;border-radius:6px;"></label>
-    <label>하위 폴더 (output_dir)
-      <input id="c_out" style="width:100%;padding:7px;border:1px solid #ccd2db;border-radius:6px;"></label>
+    <label>하위 폴더 <small style="color:#888">(비우면 시나리오 폴더 자체 · OUTPUT 등 하위폴더 무시)</small>
+      <input id="c_out" placeholder="(비움)" style="width:100%;padding:7px;border:1px solid #ccd2db;border-radius:6px;"></label>
+    <label>비교 대상 확장자 <small style="color:#888">(쉼표 구분 · 예: .xml)</small>
+      <input id="c_ext" placeholder=".xml" style="width:100%;padding:7px;border:1px solid #ccd2db;border-radius:6px;"></label>
     <label>뷰어 미러 env <small style="color:#888">(비우면 미러 안 함)</small>
       <input id="c_venv" style="width:100%;padding:7px;border:1px solid #ccd2db;border-radius:6px;"></label>
     <label>검증 방식
@@ -176,7 +178,7 @@ code{background:#f0f2f5;padding:1px 5px;border-radius:4px;
 const $=s=>document.querySelector(s);
 // 이 화면 파일의 버전. 헤더에 표시되므로, 브라우저가 예전 화면을 쓰고
 // 있는지 눈으로 바로 확인할 수 있다(파일만 봐서는 알 수 없다).
-const PAGE_VERSION = '2026-09-22e';
+const PAGE_VERSION = '2026-09-22h';
 let REP=null, FILTER={flow:1,script:1,screen:1,struct:1,vars:1}, Q='';
 // 파일 펼침 제어. 변경 블록이 HEAVY_BLOCKS 를 넘으면 렌더가 무거워지므로
 // 그때만 앞 3개만 펼치고, '모두 펼치기'로 강제 전환할 수 있게 한다.
@@ -203,7 +205,8 @@ $('#re').onclick=()=>run(true);
 
 // ── 시나리오 경로 설정 ────────────────────────────────────
 const CFG_FIELDS={ssh:'c_ssh',ssh_port:'c_port',base:'c_base',new_dir:'c_new',
-                  old_dir:'c_old',output_dir:'c_out',viewer_env:'c_venv',verify:'c_verify'};
+                  old_dir:'c_old',output_dir:'c_out',file_ext:'c_ext',
+                  viewer_env:'c_venv',verify:'c_verify'};
 function cfgFill(j){
   const c=j.config||{};
   for(const [k,id] of Object.entries(CFG_FIELDS)) $('#'+id).value=c[k]||'';

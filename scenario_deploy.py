@@ -58,7 +58,12 @@ DEFAULTS = {
     "base": r"C:\TEMP\시나리오",
     "new_dir": "운영",
     "old_dir": "과거",
-    "output_dir": "OUTPUT",
+    # 비우면 시나리오 폴더 자체를 본다. OUTPUT 같은 하위 폴더는 수집 대상이
+    # 아니다(원격 조회가 -File 로 최상위만 훑는다).
+    "output_dir": "",
+    # 비교 대상 확장자. OUTPUT 의 .dxml 은 배포 산출물이라 구조가 달라
+    # 기본은 시나리오 폴더의 .xml 을 본다.
+    "file_ext": ".xml",
     "viewer_env": "",       # 지정 시 운영본을 scenario_cache/<env>/ 로 미러
     "verify": "hash",       # hash=내용해시까지 확인(권장) / fast=크기+수정시각만
 }
@@ -106,6 +111,23 @@ def save_cfg(patch):
     if not save_config(full):
         return False, cfg, "config.json 저장 실패"
     return True, cfg, None
+
+
+def _ext_ps(exts):
+    """확장자 튜플 → PowerShell 배열 리터럴  ('.xml','.dxml')"""
+    return ",".join("'" + e + "'" for e in (exts or (".xml",)))
+
+
+def scn_exts(cfg=None):
+    """비교 대상 확장자 튜플. 설정값(쉼표 구분)을 정규화한다."""
+    raw = ((cfg or load_cfg()).get("file_ext") or ".xml")
+    out = []
+    for e in str(raw).replace(";", ",").split(","):
+        e = e.strip().lower()
+        if not e:
+            continue
+        out.append(e if e.startswith(".") else "." + e)
+    return tuple(out) or (".xml",)
 
 
 def _remote_dir(cfg, slot):
@@ -267,7 +289,8 @@ def _ps(alias, script, timeout=300, port=None):
         ) from None
 
 
-def remote_manifest(alias, remote_dir, verify="hash"):
+def remote_manifest(alias, remote_dir, verify="hash", exts=None):
+    exts = exts or scn_exts()
     """
     원격 폴더의 시나리오 파일 목록 → {파일명소문자: [원본명, 크기, ticks, md5?]}
 
@@ -283,7 +306,7 @@ def remote_manifest(alias, remote_dir, verify="hash"):
               "if(-not (Test-Path -LiteralPath $d)){'__MISSING__';exit};"
               "$md5=[Security.Cryptography.MD5]::Create();"
               "Get-ChildItem -LiteralPath $d -File | "
-              "Where-Object { $_.Extension -in '.dxml','.xml' } | "
+              f"Where-Object {{ $_.Extension -in {_ext_ps(exts)} }} | "
               "ForEach-Object { "
               "  $fs=[IO.File]::OpenRead($_.FullName);"
               "  $h=[BitConverter]::ToString($md5.ComputeHash($fs)).Replace('-','');"
@@ -293,7 +316,7 @@ def remote_manifest(alias, remote_dir, verify="hash"):
         ps = (f"$d='{_q(remote_dir)}';"
               "if(-not (Test-Path -LiteralPath $d)){'__MISSING__';exit};"
               "Get-ChildItem -LiteralPath $d -File | "
-              "Where-Object { $_.Extension -in '.dxml','.xml' } | "
+              f"Where-Object {{ $_.Extension -in {_ext_ps(exts)} }} | "
               "ForEach-Object { $_.Name + '|' + $_.Length + '|' + $_.LastWriteTimeUtc.Ticks }")
     r = _ps(alias, ps, timeout=90)
     if r.returncode != 0:
@@ -386,13 +409,24 @@ def _extract(tgz, dest, wipe):
     for f in os.listdir(dest):
         p = os.path.join(dest, f)
         if os.path.isfile(p) and not f.startswith('.') \
-                and not f.lower().endswith(DIFF.SCN_EXT):
+                and not f.lower().endswith(tuple(scn_exts())):
             os.unlink(p)
 
 
-def _pull_full(alias, remote_dir, dest):
+def _pull_full(alias, remote_dir, dest, exts=None):
+    exts = exts or scn_exts()
     rtmp = f"C:\\Windows\\Temp\\scn_{int(time.time()*1000)}.tgz"
-    script = f"tar -czf '{_q(rtmp)}' -C '{_q(remote_dir)}' ."
+    # 폴더를 통째로 담으면 OUTPUT 같은 하위 폴더까지 전송된다(수십 MB 낭비).
+    # 최상위의 대상 확장자 파일만 모아서 보낸다.
+    stage = f"C:\\Windows\\Temp\\scnfull_{int(time.time()*1000)}"
+    script = (
+        f"$d='{_q(remote_dir)}';$s='{_q(stage)}';"
+        f"New-Item -ItemType Directory -Force -Path $s | Out-Null;"
+        f"Get-ChildItem -LiteralPath $d -File | "
+        f"Where-Object {{ $_.Extension -in {_ext_ps(exts)} }} | "
+        f"ForEach-Object {{ Copy-Item -LiteralPath $_.FullName -Destination $s -Force }};"
+        f"tar -czf '{_q(rtmp)}' -C $s .;"
+        f"Remove-Item -LiteralPath $s -Recurse -Force")
     tgz = _fetch_tgz(alias, script, rtmp)
     try:
         _extract(tgz, dest, wipe=True)
@@ -609,8 +643,9 @@ def check(force=False):
             rep = None
     if rep is None:
         t0 = time.time()
-        so, sto = DIFF.snapshot_folder_cached(_local_dir("old"), _snapcache("old"))
-        sn, stn = DIFF.snapshot_folder_cached(_local_dir("new"), _snapcache("new"))
+        exts = scn_exts(cfg)
+        so, sto = DIFF.snapshot_folder_cached(_local_dir("old"), _snapcache("old"), exts)
+        sn, stn = DIFF.snapshot_folder_cached(_local_dir("new"), _snapcache("new"), exts)
         rep = DIFF.diff_snapshots(so, sn, locate=_make_locator(cfg.get("viewer_env")))
         rep["cached"] = False
         rep["report_version"] = DIFF.REPORT_VERSION

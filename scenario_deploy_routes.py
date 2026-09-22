@@ -146,14 +146,21 @@ def api_xmlprobe():
     try:
         for slot in ("new", "old"):
             d = DEP._local_dir(slot)
+            cfg = DEP.load_cfg()
+            exts = DEP.scn_exts(cfg)
+            # 설정된 확장자 외에 뭐가 있는지도 보여줘야 설정이 맞는지 판단된다
+            allx = tuple(dict.fromkeys(exts + D.SCN_EXT))
             files = []
-            for ext in D.SCN_EXT:
+            for ext in exts:
                 files += glob.glob(os.path.join(d, "*" + ext))
             L.append(f"[{DEP.SLOT_NAME[slot]}] {d}")
-            L.append(f"  파일 {len(files)}개"
-                     + (f" (확장자별: " + ", ".join(
-                         f"{e} {len([f for f in files if f.lower().endswith(e)])}개"
-                         for e in D.SCN_EXT) + ")" if files else ""))
+            L.append(f"  설정: 하위폴더={cfg.get('output_dir') or '(없음 — 시나리오 폴더)'}"
+                     f"  확장자={','.join(exts)}")
+            L.append(f"  원격 경로: {DEP._remote_dir(cfg, slot)}")
+            L.append(f"  대상 파일 {len(files)}개"
+                     + (" (폴더 전체: " + ", ".join(
+                         f"{e} {len(glob.glob(os.path.join(d, '*' + e)))}개"
+                         for e in allx) + ")"))
             # 하위 폴더도 있는지 알려준다(수집 경로가 맞는지 확인용)
             subs = [x for x in glob.glob(os.path.join(d, "*")) if os.path.isdir(x)]
             if subs:
@@ -193,14 +200,25 @@ def api_xmlprobe():
                 L.append(f"     찾은 Node : {len(nodes)}개")
                 if nodes:
                     n0 = nodes[0]
-                    L.append(f"     첫 Node 속성 : {dict(n0.attrib)}")
-                    L.append(f"     첫 Node 자식 : {[c.tag for c in n0]}")
+                    L.append(f"     첫 블록 태그 : <{n0.tag}>")
+                    L.append(f"     첫 블록 속성 : {dict(n0.attrib)}")
+                    L.append(f"     첫 블록 자식 : {[c.tag for c in n0][:25]}")
                     cp = n0.find("CustomProperties")
-                    if cp is None:
-                        L.append("     ★ CustomProperties 가 없습니다")
-                    else:
+                    if cp is not None:
                         L.append(f"     CustomProperties 안: {[c.tag for c in cp][:25]}")
-                        L.append(f"     읽어낸 식별자(Sequence): {D._seq_of(n0, cp)!r}")
+                    L.append(f"     읽어낸 식별자 : {D._seq_of(n0, cp)!r}")
+                    L.append(f"     읽어낸 이름   : "
+                             f"{D._field(n0, cp, 'Text', 'Label', 'Title', 'Name')!r}")
+                    scr = D._field(n0, cp, 'Script', 'Source', 'Code')
+                    L.append(f"     읽어낸 스크립트: {scr[:120]!r}")
+                else:
+                    # 블록을 못 찾았으면 첫 자식이라도 그대로 보여준다
+                    kids = list(root)
+                    if kids:
+                        k0 = kids[0]
+                        L.append(f"     ★ 블록을 못 찾음. 첫 자식 <{k0.tag}> "
+                                 f"속성={dict(k0.attrib)}")
+                        L.append(f"        그 자식들: {[c.tag for c in k0][:25]}")
                 snap = D.snapshot_file(path)
                 L.append(f"     → 최종 블록 수: {len(snap['blocks']) if snap else '파싱실패'}")
             L.append("")

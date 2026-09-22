@@ -32,12 +32,12 @@ MAX_FULL_CHARS = 8000         # 리뷰용 '블록 전문'에 담을 스크립트
 
 # 스냅샷 캐시 구조/파서가 바뀌면 올린다. 올리지 않으면 예전 캐시가 그대로
 # 재사용돼서 파서를 고쳐도 반영되지 않는다(파일이 안 바뀌면 재파싱을 안 하므로).
-CACHE_VERSION = 4   # 파서 변경(네임스페이스/구조 관용) → 전량 재파싱
+CACHE_VERSION = 5   # 파서 변경(scenario/block 형식 지원) → 전량 재파싱
 
 # 리포트(diff 결과) 형식 버전. 리포트에 담는 항목이 바뀌면 올린다.
 # scenario_deploy.check() 가 캐시 키와 검증에 쓴다 — 올리지 않으면
 # 시나리오가 그대로일 때 예전 형식 리포트가 계속 나온다.
-REPORT_VERSION = 3
+REPORT_VERSION = 4
 
 
 # ══════════════════════════════════════════════════════════════
@@ -247,15 +247,55 @@ def _strip_ns(root):
     return root
 
 
+# 시나리오 도구에 따라 블록을 담는 태그 이름이 다르다.
+#   <Diagram><Nodes><Node>    (편집 도구 저장본)
+#   <scenario><block>         (배포 산출물)
+_NODE_TAGS = ("node", "block", "step", "page")
+
+
 def _find_nodes(root):
-    """Node 요소 찾기. 문서 구조가 조금 달라도 찾아내도록 단계적으로 시도."""
+    """블록 요소 찾기. 문서 구조/태그 이름이 달라도 찾아낸다."""
     for xp in ("./Nodes/Node", "./Node", ".//Nodes/Node"):
         found = root.findall(xp)
         if found:
             return found
-    # 마지막 수단: 문서 어디에 있든 Node 태그 전부 (Links 안의 참조는
-    # CustomProperties 가 없어 아래에서 걸러진다)
-    return root.findall(".//Node")
+    # 태그 이름으로 찾기(대소문자 무시). <scenario><block> 형식이 여기 걸린다.
+    direct = [el for el in root if isinstance(el.tag, str)
+              and el.tag.lower() in _NODE_TAGS]
+    if direct:
+        return direct
+    return [el for el in root.iter() if el is not root
+            and isinstance(el.tag, str) and el.tag.lower() in _NODE_TAGS]
+
+
+def _kids(el):
+    """자식 요소를 {소문자태그: 요소} 로. 같은 태그가 여럿이면 첫 번째."""
+    out = {}
+    if el is None:
+        return out
+    for c in el:
+        if isinstance(c.tag, str):
+            out.setdefault(c.tag.lower(), c)
+    return out
+
+
+def _field(node, cp, *names):
+    """필드 값 찾기 — CustomProperties 자식 → 노드 자식 → 노드 속성 순.
+
+    태그 이름과 대소문자가 도구마다 달라서, 후보 이름을 차례로 본다.
+    """
+    cpk, nk = _kids(cp), _kids(node)
+    for nm in names:
+        low = nm.lower()
+        for src in (cpk, nk):
+            el = src.get(low)
+            if el is not None and (el.text or "").strip():
+                return el.text.strip()
+        for attrs in (node.attrib, (cp.attrib if cp is not None else {})):
+            for k, v in attrs.items():
+                if k.lower() == low and (v or "").strip():
+                    return v.strip()
+    return ""
 
 
 def _find_links(root):
@@ -267,23 +307,8 @@ def _find_links(root):
 
 
 def _seq_of(node, cp):
-    """블록 식별자. Sequence 가 없으면 대체 필드를 차례로 본다."""
-    for tag in ("Sequence", "Seq", "Index", "Order"):
-        v = _t(cp, tag)
-        if v:
-            return v
-    # CustomProperties 안쪽 깊은 곳에 있을 수도 있다
-    if cp is not None:
-        for tag in ("Sequence", "Seq"):
-            el = cp.find(f".//{tag}")
-            if el is not None and (el.text or "").strip():
-                return el.text.strip()
-    # 노드 속성으로 들어있는 경우
-    for attr in ("Sequence", "Seq", "Id"):
-        v = (node.get(attr) or "").strip()
-        if v:
-            return v
-    return ""
+    """블록 식별자. 도구마다 이름이 달라 후보를 차례로 본다."""
+    return _field(node, cp, "Sequence", "Seq", "Index", "Order", "No", "Id", "Name")
 
 
 def snapshot_file(path):
@@ -306,19 +331,19 @@ def snapshot_file(path):
         if not seq:
             continue
         id2seq[nid] = seq
-        script = _t(cp, "Script")
-        pre = _t(cp, "PreScript")
+        script = _field(n, cp, "Script", "Source", "Code")
+        pre = _field(n, cp, "PreScript", "Pre")
         wv = parse_wv(pre + "\n" + script)
         blocks[seq] = {
             "seq": seq,
-            "label": _clean(n.findtext("Text")),
-            "type": n.get("NodeType") or "",
-            "cond": _t(cp, "Condition"),
-            "target": _t(cp, "TargetPage"),
-            "target_node": _t(cp, "TargetNodeId"),
-            "result_case": _t(cp, "ResultCase"),
-            "ret": _t(cp, "r"),
-            "comment": _clean(_t(cp, "Comment")),
+            "label": _clean(_field(n, cp, "Text", "Label", "Title", "Name", "Desc")),
+            "type": _field(n, cp, "NodeType", "Type", "Kind"),
+            "cond": _field(n, cp, "Condition", "Cond", "Expr"),
+            "target": _field(n, cp, "TargetPage", "Target", "NextPage", "Goto"),
+            "target_node": _field(n, cp, "TargetNodeId", "TargetNode", "NextNode"),
+            "result_case": _field(n, cp, "ResultCase", "Result"),
+            "ret": _field(n, cp, "r", "Return", "Ret"),
+            "comment": _clean(_field(n, cp, "Comment", "Remark", "Note")),
             "script": script,
             "prescript": pre,
             "screens": wv["screens"],
@@ -349,11 +374,11 @@ def snapshot_file(path):
             "node_count": len(nodes)}
 
 
-def snapshot_folder(folder):
+def snapshot_folder(folder, exts=None):
     """폴더 전체 → {파일명(lower): 스냅샷}"""
     snap = {}
     files = []
-    for ext in SCN_EXT:
+    for ext in (exts or SCN_EXT):
         files += glob.glob(os.path.join(folder, "*" + ext))
     for f in sorted(set(files)):
         s = snapshot_file(f)
@@ -362,7 +387,7 @@ def snapshot_folder(folder):
     return snap
 
 
-def snapshot_folder_cached(folder, cache_path):
+def snapshot_folder_cached(folder, cache_path, exts=None):
     """
     증분 스냅샷. 파일 (크기,mtime) 이 같으면 캐시 재사용 → 바뀐 파일만 재파싱.
     Returns: (snapshot, {"parsed":n, "reused":n})
@@ -379,7 +404,7 @@ def snapshot_folder_cached(folder, cache_path):
             cache = {}
 
     files = []
-    for ext in SCN_EXT:
+    for ext in (exts or SCN_EXT):
         files += glob.glob(os.path.join(folder, "*" + ext))
     snap, newcache = {}, {"__version__": CACHE_VERSION}
     parsed = reused = 0
@@ -408,9 +433,9 @@ def snapshot_folder_cached(folder, cache_path):
     return snap, {"parsed": parsed, "reused": reused}
 
 
-def folder_signature(folder):
+def folder_signature(folder, exts=None):
     sig = []
-    for ext in SCN_EXT:
+    for ext in (exts or SCN_EXT):
         for f in glob.glob(os.path.join(folder, "*" + ext)):
             st = os.stat(f)
             sig.append(f"{os.path.basename(f)}|{st.st_size}|{int(st.st_mtime)}")
@@ -882,9 +907,9 @@ def diff_snapshots(old, new, locate=None):
     return report
 
 
-def diff_folders(old_folder, new_folder, locate=None):
-    return diff_snapshots(snapshot_folder(old_folder),
-                          snapshot_folder(new_folder), locate=locate)
+def diff_folders(old_folder, new_folder, locate=None, exts=None):
+    return diff_snapshots(snapshot_folder(old_folder, exts),
+                          snapshot_folder(new_folder, exts), locate=locate)
 
 
 if __name__ == "__main__":
