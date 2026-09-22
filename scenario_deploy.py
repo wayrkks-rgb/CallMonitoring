@@ -40,7 +40,12 @@ REPORT_DIR = os.path.join(BASE_DIR, "deploy_reports")
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
 SSH_OPTS = ['-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15',
-            '-o', 'ServerAliveCountMax=3', '-o', 'StrictHostKeyChecking=accept-new']
+            '-o', 'ServerAliveCountMax=3', '-o', 'StrictHostKeyChecking=accept-new',
+            # 웹 요청에서 실행되므로 비밀번호를 물어볼 상대가 없다. BatchMode 가
+            # 없으면 ssh 가 입력을 기다리며 멈춰 있다가 타임아웃까지 가고,
+            # 화면에는 '900초 초과'만 남아 원인이 보이지 않는다.
+            # 키 인증이 안 되면 즉시 실패하게 해서 사유를 드러낸다.
+            '-o', 'BatchMode=yes']
 
 # 변경 파일이 이 수(또는 이 비율)를 넘으면 델타보다 전체가 유리
 DELTA_MAX_FILES = 120
@@ -143,16 +148,122 @@ def _port_opt(port, scp=False):
     return ['-P' if scp else '-p', str(int(port))]
 
 
+def _find_server(host):
+    """config.json 의 remote_servers 에서 이 호스트에 해당하는 서버를 찾는다."""
+    if not host:
+        return None
+    try:
+        from config_manager import load_config
+        servers = (load_config() or {}).get('remote_servers', []) or []
+    except Exception:
+        return None
+    h = host.strip().lower()
+    for s in servers:
+        for field in ('ip', 'hostname', 'label'):
+            if (s.get(field) or '').strip().lower() == h:
+                return s
+    return None
+
+
+def ssh_identity(cfg=None):
+    """설정의 ssh 값 → (접속대상, 추가옵션).
+
+    시나리오 배포는 그동안 ~/.ssh/config 의 Host alias 만 썼다. 그래서 서버
+    관리에서 SSH 키를 등록해 둔 서버인데도 그 키를 쓰지 않고, 비밀번호 인증으로
+    떨어져 입력을 기다렸다. config.json 에 같은 호스트가 있으면 거기 등록된
+    ssh_key_path / user / ssh_port 를 가져다 쓴다.
+
+    alias 가 config.json 에 없으면(순수 ~/.ssh/config alias) 원래대로 둔다.
+    """
+    cfg = cfg or load_cfg()
+    raw = (cfg.get('ssh') or '').strip()
+    if not raw:
+        return None, [], None
+
+    user, _, host = raw.rpartition('@')
+    srv = _find_server(host or raw)
+    if srv is None:
+        return raw, [], None          # ssh config alias 로 간주 — 건드리지 않음
+
+    key = (srv.get('ssh_key_path') or '').strip()
+    user = user or (srv.get('user') or '').strip()
+    # 라벨로 찾았을 수 있으니(라벨은 접속 주소가 아니다) IP 를 우선한다.
+    addr = (srv.get('ip') or '').strip() or (srv.get('hostname') or '').strip() or (host or raw)
+    target = f"{user}@{addr}" if user else addr
+
+    opts = []
+    note = None
+    if key and os.path.exists(key):
+        # IdentitiesOnly: 에이전트에 다른 키가 많으면 그것들을 먼저 시도하다
+        # 서버의 인증 시도 횟수를 넘겨 거절당한다.
+        opts += ['-i', key, '-o', 'IdentitiesOnly=yes']
+    elif key:
+        note = f"등록된 SSH 키 파일이 없습니다: {key}"
+    else:
+        note = "이 서버에 SSH 키가 등록돼 있지 않습니다 (서버 관리 > SSH 키 등록)"
+    return target, opts, note
+
+
+def ssh_port_for(cfg=None):
+    """시나리오 설정의 포트. 미지정(22)이면 config.json 서버의 포트를 따른다."""
+    cfg = cfg or load_cfg()
+    p = ssh_port(cfg)
+    if p != 22:
+        return p
+    raw = (cfg.get('ssh') or '').strip()
+    _u, _s, host = raw.rpartition('@')
+    srv = _find_server(host or raw)
+    try:
+        return int(srv.get('ssh_port') or 22) if srv else 22
+    except (TypeError, ValueError):
+        return 22
+
+
+def _friendly_ssh_error(stderr, target):
+    """ssh stderr → 사람이 읽을 수 있는 한 줄."""
+    e = (stderr or '').strip()
+    low = e.lower()
+    if 'permission denied' in low:
+        return (f"{target} 키 인증 거부 — 서버 관리에서 이 서버의 SSH 키를 "
+                f"등록/재등록하세요 (원문: {e.splitlines()[0][:120]})")
+    if 'connection refused' in low or 'connection timed out' in low:
+        return f"{target} 접속 불가 — 주소/포트를 확인하세요 (원문: {e.splitlines()[0][:120]})"
+    if 'host key verification failed' in low:
+        return f"{target} 호스트 키 검증 실패 — known_hosts 를 확인하세요"
+    return e[:300] or '원인 미상'
+
+
 def _ps(alias, script, timeout=300, port=None):
     prefix = ("$ErrorActionPreference='SilentlyContinue';"
               "$ProgressPreference='SilentlyContinue';"
               "[Console]::OutputEncoding=[Text.Encoding]::UTF8;")
     enc = base64.b64encode((prefix + script).encode("utf-16-le")).decode("ascii")
-    cmd = (['ssh'] + SSH_OPTS + _port_opt(port if port is not None else ssh_port())
+
+    # 설정에 등록된 키로 접속한다(없으면 원래 alias 그대로)
+    target, key_opts, note = ssh_identity()
+    if target and alias == (load_cfg().get('ssh') or '').strip():
+        alias = target
+    else:
+        key_opts = []                 # 다른 대상이면 그 서버의 키를 쓰면 안 된다
+    if note:
+        logger.warning("시나리오 SSH: %s", note)
+
+    cmd = (['ssh'] + SSH_OPTS + key_opts
+           + _port_opt(port if port is not None else ssh_port_for())
            + [alias, 'powershell', '-NoProfile',
               '-NonInteractive', '-EncodedCommand', enc])
-    return subprocess.run(cmd, capture_output=True, text=True,
-                          encoding='utf-8', errors='ignore', timeout=timeout)
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              encoding='utf-8', errors='ignore',
+                              # 비밀번호 입력을 기다리지 못하게 한다. 이게 없으면
+                              # ssh 가 서버 콘솔의 입력을 붙잡고 요청이 멈춘다.
+                              stdin=subprocess.DEVNULL, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # 기본 메시지는 명령 전체(base64 스크립트 포함)를 쏟아내 읽을 수가 없다.
+        raise RuntimeError(
+            f"{alias} 응답이 {timeout}초 안에 오지 않았습니다. "
+            f"시나리오 폴더가 매우 크거나, 원격 작업이 멈춰 있습니다."
+        ) from None
 
 
 def remote_manifest(alias, remote_dir, verify="hash"):
@@ -214,13 +325,21 @@ def _fetch_tgz(alias, build_script, rtmp):
              build_script + f";if(Test-Path -LiteralPath '{_q(rtmp)}'){{'OK'}}else{{'FAIL'}}",
              timeout=900)
     if mk.returncode != 0 or 'OK' not in (mk.stdout or ''):
-        raise RuntimeError((mk.stderr or "").strip() or "원격 아카이브 생성 실패")
+        raise RuntimeError(_friendly_ssh_error(mk.stderr, alias) or "원격 아카이브 생성 실패")
 
     fd, local = tempfile.mkstemp(suffix=".tgz")
     os.close(fd)
-    sp = subprocess.run(['scp'] + SSH_OPTS + _port_opt(ssh_port(), scp=True) +
-                        [f'{alias}:{rtmp.replace(chr(92), "/")}', local],
-                        capture_output=True, text=True, timeout=1800)
+    scp_target, key_opts, _note = ssh_identity()
+    if not scp_target or alias != (load_cfg().get('ssh') or '').strip():
+        scp_target, key_opts = alias, []
+    try:
+        sp = subprocess.run(['scp'] + SSH_OPTS + key_opts
+                            + _port_opt(ssh_port_for(), scp=True)
+                            + [f'{scp_target}:{rtmp.replace(chr(92), "/")}', local],
+                            capture_output=True, text=True,
+                            stdin=subprocess.DEVNULL, timeout=1800)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"{alias} 파일 전송이 1800초를 넘었습니다") from None
     if sp.returncode != 0:                       # scp 불가 → base64 폴백
         try:
             os.unlink(local)

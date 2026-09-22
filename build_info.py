@@ -11,7 +11,7 @@ inspect 로 실행 중인 모듈의 소스를 직접 읽으므로, 어느 경로
 지금 돌고 있는 코드가 그 수정을 담고 있는지 확실하게 판정된다.
 """
 
-BUILD = '2026-09-21 b / 유령 항목 표시 + 삭제 대상 검증'
+BUILD = '2026-09-22 / 시나리오 배포 SSH 키 인증'
 
 # (모듈명, 표식, 없으면 무엇이 안 고쳐진 것인지)
 MARKERS = [
@@ -37,6 +37,8 @@ MARKERS = [
      '확정분 전수 조회'),
     ('vgw_monitor', 'stop_ev',
      'VGW 모니터 정지 신호 분리'),
+    ('scenario_deploy', 'ssh_identity',
+     '시나리오 배포가 config.json 의 SSH 키를 사용 — 없으면 비밀번호를 묻는다'),
     ('ssh_fetcher', 'with_filename',
      'AICC 패턴 검색 출처 파일 표시'),
 ]
