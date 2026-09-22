@@ -191,7 +191,7 @@ class OpenSSHLogFetcher:
             }
 
     def grep_remote(self, server_config, log_paths, dates, grep_pattern,
-                    use_extended=False, with_filename=False):
+                    use_extended=False, with_filename=False, timeout=None):
         """
         서버측 grep 실행 — 서버당 1회 SSH로 다중 경로/날짜 처리.
 
@@ -238,7 +238,10 @@ class OpenSSHLogFetcher:
         # 파일'이 섞이는 것이 정상이고, 그때도 존재하는 파일의 매칭 결과는
         # stdout 으로 정상 출력된다. 2를 오류로 처리하면 경로/날짜가 늘어날수록
         # 없는 파일이 낄 확률이 100%에 수렴해 결과가 통째로 버려진다.
-        lines, error = self._execute_ssh(ssh_cmd, timeout=60, ok_codes=(0, 1, 2))
+        # 제한 시간이 주어지면 그 안에서 끝낸다(패턴 검색의 전체 예산을 지키려면
+        # 개별 grep 도 남은 시간만큼만 기다려야 한다)
+        lines, error = self._execute_ssh(ssh_cmd, timeout=int(timeout) if timeout else 60,
+                                         ok_codes=(0, 1, 2))
 
         if error:
             return [], [error]

@@ -716,7 +716,7 @@ class ArsLogFetcher:
         return [l for l in text.splitlines(keepends=True) if _channel_of(l) == channel]
 
     # ── 패턴(정규식) 검색 ──────────────────────────────────
-    def search_by_pattern(self, pattern):
+    def search_by_pattern(self, pattern, deadline=None):
         """
         ARS(UNC) 로그에서 정규식 패턴을 포함하는 라인 원문을 반환.
 
@@ -743,9 +743,16 @@ class ArsLogFetcher:
         dates = self._date_range()
         results = []
 
+        import time as _time
+        partial = False
         try:
             for idx, server in targets:
                 label = get_server_label(server)
+                if deadline is not None and deadline - _time.monotonic() <= 1:
+                    partial = True
+                    self.errors.append({'server': label,
+                                        'error': '시간 초과로 건너뜀'})
+                    continue
                 # inbound + outbound 전체 경로 (패턴 검색은 용도 구분 없음)
                 paths = get_log_paths(server)
                 if not paths:
@@ -782,4 +789,5 @@ class ArsLogFetcher:
             self.conn.disconnect_all()
 
         return {'success': True, 'pattern': pattern, 'result_count': len(results),
-                'results': results, 'errors': self.errors if self.errors else None}
+                'results': results, 'partial': partial,
+                'errors': self.errors if self.errors else None}

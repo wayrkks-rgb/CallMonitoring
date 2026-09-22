@@ -298,8 +298,25 @@ class ArsSshIO:
             batches.append(cur)
         return batches
 
+    @staticmethod
+    def _encodings_for(pattern, encoding):
+        """시도할 파일 인코딩 목록.
+
+        패턴이 ASCII 뿐이면 CP949 파일에서도 utf8 로 읽은 바이트가 그대로
+        매칭된다. 그런데도 무조건 두 번 돌면 '매칭 없음' 검색이 항상 2배로
+        걸린다(패턴 검색이 유난히 느리던 큰 이유). 한글이 들어간 패턴만
+        두 번째 인코딩을 시도한다.
+        """
+        if encoding:
+            return (encoding,)
+        try:
+            pattern.encode('ascii')
+            return ('utf8',)
+        except UnicodeEncodeError:
+            return ArsSshIO.GREP_ENCODINGS
+
     def grep(self, server, paths, pattern, regex=True, encoding=None,
-             with_filename=False):
+             with_filename=False, timeout=None):
         """서버측 Select-String 으로 매칭 라인만 회수.
 
         Args:
@@ -313,14 +330,15 @@ class ArsSshIO:
         if not paths:
             return [], None
         pat = pattern.replace("'", "''")
-        encs = (encoding,) if encoding else self.GREP_ENCODINGS
+        encs = self._encodings_for(pattern, encoding)
         last_err = None
 
         for enc in encs:
             lines = []
             for batch in self._grep_batches(paths, pat, regex, enc, with_filename):
                 rc, out, err = self._run_ps(
-                    server, self._grep_script(batch, pat, regex, enc, with_filename))
+                    server, self._grep_script(batch, pat, regex, enc, with_filename),
+                    timeout=timeout)
                 if rc != 0:
                     last_err = (err or '').strip()[:200] or f'PowerShell rc={rc}'
                     logger.warning("ARS grep 실패 (%s, 경로 %d개): %s",
@@ -359,7 +377,10 @@ class ArsSshLogFetcher(ArsLogFetcher):
         return {get_server_label(s): s for _, s in self._ars_ssh_servers()}
 
     # ── 패턴 검색 (서버측 Select-String) ───────────────────
-    def search_by_pattern(self, pattern):
+    def search_by_pattern(self, pattern, deadline=None):
+        """deadline: time.monotonic() 기준 마감 시각. 넘기면 남은 서버를 건너뛰고
+        partial=True 로 돌려준다 (전부 끝날 때까지 기다리다 브라우저가 멎는 것 방지)."""
+        import time as _time
         try:
             re.compile(pattern)
         except re.error as e:
@@ -372,29 +393,55 @@ class ArsSshLogFetcher(ArsLogFetcher):
 
         dates = self._date_range()
         results = []
-        for _, server in servers:
+        partial = False
+        skipped = []
+
+        # 서버마다 별개의 SSH 접속이라 서로 기다릴 이유가 없다. 순차로 돌면
+        # 서버 수만큼 시간이 곱해진다(서버마다 대용량 로그를 훑으므로).
+        def one(server):
             label = get_server_label(server)
             paths = get_log_paths(server)          # SSH 모드: 로컬 경로들
             if not paths:
-                continue
-            # 날짜/시(HH) 전개 → 로컬 경로 후보
+                return label, [], None, False
+            remain = None
+            if deadline is not None:
+                remain = deadline - _time.monotonic()
+                if remain <= 1:
+                    return label, [], None, True   # 시간 초과로 건너뜀
             candidates = [p for _, p in self._candidate_files(paths, dates)]
             # with_filename=True: 서버 1대가 시(HH)별로 여러 파일을 보므로
             # 어느 파일에서 나온 줄인지 결과에 같이 실어보낸다.
             lines, err = self.io.grep(server, candidates, pattern, regex=True,
-                                      with_filename=True)
-            if err:
-                self.errors.append({'server': label, 'error': 'SSH 검색 오류', 'details': err})
+                                      with_filename=True,
+                                      timeout=int(remain) if remain else None)
+            out = []
             for line in lines:
                 path, body = ('', line)
                 if GREP_FILE_SEP in line:
                     path, body = line.split(GREP_FILE_SEP, 1)
-                results.append({'line': body.strip(), 'server': label, 'type': 'ARS',
-                                'file': os.path.basename(path.replace('\\', '/')) if path else '',
-                                'file_path': path,
-                                'timestamp': _time_of_safe(body)})
+                out.append({'line': body.strip(), 'server': label, 'type': 'ARS',
+                            'file': os.path.basename(path.replace(chr(92), '/')) if path else '',
+                            'file_path': path,
+                            'timestamp': _time_of_safe(body)})
+            return label, out, err, False
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max(1, min(len(servers), 8))) as ex:
+            for label, out, err, skip in ex.map(lambda t: one(t[1]), servers):
+                if skip:
+                    partial = True
+                    skipped.append(label)
+                    continue
+                if err:
+                    self.errors.append({'server': label, 'error': 'SSH 검색 오류',
+                                        'details': err})
+                results.extend(out)
+        if skipped:
+            self.errors.append({'error': '시간 초과로 건너뜀',
+                                'details': f"ARS(SSH) {', '.join(skipped)}"})
         return {'success': True, 'pattern': pattern, 'result_count': len(results),
-                'results': results, 'errors': self.errors or None}
+                'results': results, 'partial': partial,
+                'errors': self.errors or None}
 
     # ── 인바운드 검색 (인덱스 + 오프셋 SSH 읽기) ────────────
     def search_inbound(self, phone=None, cust_id=None):
