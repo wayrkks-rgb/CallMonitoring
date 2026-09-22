@@ -87,6 +87,9 @@ pre.diff .h{color:#8250df;display:block}
 .ph .bot{border-top:1px solid var(--line);padding:4px 9px;font-size:10px;color:var(--dim);
   background:#fafbfc;text-align:center}
 .empty{text-align:center;color:var(--dim);padding:56px 20px}
+.warn{background:#fff4d6;border:1px solid #f0d089;color:#7a5200;
+  border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px;line-height:1.6}
+.hint{margin-left:auto;font-size:11.5px;color:var(--dim);white-space:nowrap}
 .spin{display:inline-block;width:13px;height:13px;border:2px solid #fff;
   border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;
   vertical-align:-2px;margin-right:6px}
@@ -148,6 +151,10 @@ pre.diff .h{color:#8250df;display:block}
 <script>
 const $=s=>document.querySelector(s);
 let REP=null, FILTER={flow:1,script:1,screen:1,struct:1}, Q='';
+// 파일 펼침 제어. 변경 블록이 HEAVY_BLOCKS 를 넘으면 렌더가 무거워지므로
+// 그때만 앞 3개만 펼치고, '모두 펼치기'로 강제 전환할 수 있게 한다.
+const HEAVY_BLOCKS = 400;
+let EXPAND_ALL = true, OPEN_LIMIT = 1e9, FORCE_EXPAND = false;
 
 async function run(force){
   const b=$('#go'), r=$('#re');
@@ -207,6 +214,13 @@ function esc(s){return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;'
 function render(){
   const R=REP,S=R.summary,M=R.meta;
   let h='';
+
+  // 한 번에 그릴 양을 가늠해 기본 펼침 여부를 정한다.
+  const totalBlocks = (R.files||[]).reduce((a,f)=>a
+      + (f.changed_blocks||[]).length + (f.added_blocks||[]).length
+      + (f.removed_blocks||[]).length, 0);
+  EXPAND_ALL = FORCE_EXPAND || totalBlocks <= HEAVY_BLOCKS;
+  OPEN_LIMIT = EXPAND_ALL ? 1e9 : 3;
   const fm={full:'전체 수집',delta:'변경분만 수집',skip:'변경 없음'};
   h+='<div class="src"><span>기준(과거) <b>'+esc(M.old.path)+'</b> · '+M.old.files+'개 / '+M.old.mb+'MB'
     +' <i>('+(fm[M.old.fetch]||M.old.fetch)+(M.old.pulled?' '+M.old.pulled+'개':'')+')</i></span>'
@@ -231,11 +245,24 @@ function render(){
     h+='</div>';
   }
 
+  // 백엔드가 상한(MAX_BLOCK_CHANGES)에 걸려 뒷부분을 버렸으면 반드시 알린다.
+  // 이걸 안 보여주면 '변경이 없다'와 '너무 많아 잘렸다'가 구별되지 않는다.
+  if(S.truncated){
+    h+='<div class="warn">⚠ 변경이 너무 많아 리포트가 중간에서 잘렸습니다. '
+      +'아래 목록은 전체가 아닙니다. 필터나 검색으로 범위를 좁혀 확인하세요.</div>';
+  }
+
   h+='<div class="bar">'
     +chip('flow','업무 흐름')+chip('script','함수처리')+chip('screen','보이는ARS 화면')
     +chip('struct','블록 추가·삭제')
     +'<input class="f" id="q" placeholder="시나리오/블록 검색" value="'+esc(Q)+'">'
-    +'<button class="btn" id="ex">모두 펼치기</button></div>';
+    +'<button class="btn" id="ex">'+(EXPAND_ALL?'모두 접기':'모두 펼치기')+'</button></div>';
+
+  if(!EXPAND_ALL){
+    h+='<div class="warn">변경 블록이 '+totalBlocks+'개라 화면이 무거워질 수 있어 '
+      +'앞 3개 시나리오만 펼쳐 두었습니다. 파일 제목을 클릭하거나 '
+      +'<b>모두 펼치기</b>를 누르면 전체 내용을 볼 수 있습니다.</div>';
+  }
 
   if(R.added_files.length||R.removed_files.length){
     h+='<div class="file open"><div class="fh"><span class="fn">시나리오 파일 추가 / 삭제</span></div><div class="fb">';
@@ -254,7 +281,14 @@ function render(){
   document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{FILTER[c.dataset.k]=!FILTER[c.dataset.k];render();});
   const q=$('#q'); if(q){ q.oninput=()=>{Q=q.value;render();
     const n=$('#q'); n.focus(); n.setSelectionRange(n.value.length,n.value.length);}; }
-  const ex=$('#ex'); if(ex) ex.onclick=()=>document.querySelectorAll('.file').forEach(e=>e.classList.add('open'));
+  const ex=$('#ex'); if(ex) ex.onclick=()=>{
+    // 접힌 상태였다면 강제로 전체 펼침으로 전환하고 다시 그린다
+    if(!EXPAND_ALL){ FORCE_EXPAND=true; render(); return; }
+    // 이미 전부 펼쳐져 있으면 접는다
+    FORCE_EXPAND=false; EXPAND_ALL=false; OPEN_LIMIT=0;
+    document.querySelectorAll('.file').forEach(e=>e.classList.remove('open'));
+    ex.textContent='모두 펼치기';
+  };
 }
 function card(n,l,c){return '<div class="c '+c+'"><div class="n">'+n+'</div><div class="l">'+l+'</div></div>';}
 function chip(k,l){return '<span class="chip'+(FILTER[k]?' on':'')+'" data-k="'+k+'">'+l+'</span>';}
@@ -284,7 +318,12 @@ function fileHtml(f,i){
   if(c.added) tags+='<span class="tag t-add">추가 '+c.added+'</span>';
   if(c.removed) tags+='<span class="tag t-del">삭제 '+c.removed+'</span>';
   if(c.links) tags+='<span class="tag t-flow">연결 '+c.links+'</span>';
-  return '<div class="file'+(i<3?' open':'')+'"><div class="fh"><span class="fn">'+esc(f.file)+'</span>'+tags
+  // 예전에는 앞 3개 파일만 펼쳤다. 나머지는 파일명과 개수 배지만 보여서
+  // '개수만 나오고 내용은 안 보인다'가 됐다. 기본은 전부 펼친다.
+  // (변경 블록이 너무 많으면 한 화면에 다 그리면 느려지므로 그때만 접는다)
+  const openByDefault = (EXPAND_ALL || i < OPEN_LIMIT);
+  return '<div class="file'+(openByDefault?' open':'')+'"><div class="fh"><span class="fn">'+esc(f.file)+'</span>'+tags
+    + (openByDefault?'':'<span class="hint">클릭하여 내용 보기</span>')
     +'</div><div class="fb">'+blocks+'</div></div>';
 }
 function match(f,b,q){ if(!q) return true;

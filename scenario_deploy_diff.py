@@ -33,6 +33,13 @@ MAX_BLOCK_CHANGES = 4000      # 리포트 전체 블록 변경 상한(안전판)
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 _WV_LINE = re.compile(r"app\.(WV_\w+)\s*(\+=|=)\s*(.*)$")
 
+# 화면을 변수(app.WV_Param)에 쌓지 않고 전송 함수에 문자열로 바로 넘기는
+# 작성 방식도 있다. 이걸 빠뜨리면 그 화면의 문구/버튼이 바뀌어도
+# '화면 변경'으로 잡히지 않고 스크립트 원문 diff 로만 보인다.
+#   szSendMenuData("S$HLIA001;TIT$1$주메뉴;BTNA$1$조회$1");
+_WV_SEND = re.compile(
+    r"(?:szSendMenuData|SendMenuData|SendData)\s*\(\s*[\"'](S\$[^\"']*)[\"']")
+
 # WV_Param 외에 화면 컨텍스트로 함께 수집할 변수
 WV_META_KEYS = ("WV_ment", "WV_mentFormat", "WV_InputTimeout",
                 "WV_RetryCount", "WV_TimeoutMent", "WV_2DepthCode")
@@ -97,11 +104,14 @@ def parse_wv(script):
     Returns: {"screens":[screen,...], "meta":{WV_ment:..., ...}}
       screen = {code, title, texts[], buttons[], flags{}, raw}
     """
-    if not script or "WV_" not in script:
+    if not script or ("WV_" not in script and "S$" not in script):
         return {"screens": [], "meta": {}}
     script = _BLOCK_COMMENT.sub("", script)
 
     screens, meta = [], {}
+    # 전송 함수에 직접 넘긴 화면 문자열도 화면으로 취급한다
+    for m in _WV_SEND.finditer(script):
+        screens.append(m.group(1))
     cur = None            # 현재 누적중인 WV_Param 문자열
     for line in script.splitlines():
         ls = line.strip()
@@ -141,6 +151,12 @@ def parse_wv(script):
                 s["buttons"].append({
                     "idx": f[1], "label": f[2], "ret": f[3],
                     "flag": f[4] if len(f) > 4 else "",
+                })
+            elif head == "BTNM" and len(f) >= 4:
+                # 메뉴 버튼: BTNM$순번$아이콘$라벨 (BTNA 와 필드 순서가 다르다)
+                s["buttons"].append({
+                    "idx": f[1], "label": "$".join(f[3:]), "ret": "",
+                    "flag": f[2],
                 })
             else:
                 if len(f) >= 2:
@@ -338,8 +354,20 @@ def _script_diff(old, new, title):
 def _screen_key(s):
     return (s.get("code", ""), s.get("title", ""),
             tuple(s.get("texts", [])),
-            tuple((b["idx"], b["label"], b["ret"]) for b in s.get("buttons", [])),
+            # flag(아이콘/속성)까지 넣어야 아이콘만 바뀐 경우도 변경으로 잡힌다
+            tuple((b["idx"], b["label"], b["ret"], b.get("flag", ""))
+                  for b in s.get("buttons", [])),
             tuple(sorted(s.get("flags", {}).items())))
+
+
+def _btn_key(b):
+    """버튼 매칭 키. 반환코드 우선, 없으면 순번."""
+    return b.get("ret") or f"#{b.get('idx')}"
+
+
+def _btn_desc(b):
+    """버튼을 가리키는 읽을 수 있는 표현."""
+    return f"반환 {b['ret']}" if b.get("ret") else f"{b.get('idx')}번"
 
 
 def _screen_changes(olds, news):
@@ -373,20 +401,27 @@ def _screen_changes(olds, news):
         for t in ot:
             if t not in wt:
                 msgs.append(f"안내문 삭제: '{t}'")
-        # 버튼 (반환코드 기준 매칭)
-        ob = {b["ret"]: b for b in o.get("buttons", [])}
-        wb = {b["ret"]: b for b in w.get("buttons", [])}
+        # 버튼 매칭 — 반환코드가 있으면 그것으로, 없으면(메뉴 버튼 BTNM)
+        # 순번으로 맞춘다. 반환코드만 쓰면 BTNM 버튼이 전부 빈 키 하나로
+        # 뭉쳐서 한 개만 비교되고 나머지 변경이 사라진다.
+        ob = {_btn_key(b): b for b in o.get("buttons", [])}
+        wb = {_btn_key(b): b for b in w.get("buttons", [])}
         for r in wb:
             if r not in ob:
-                msgs.append(f"버튼 추가: '{wb[r]['label']}' (반환 {r})")
+                msgs.append(f"버튼 추가: '{wb[r]['label']}' ({_btn_desc(wb[r])})")
         for r in ob:
             if r not in wb:
-                msgs.append(f"버튼 삭제: '{ob[r]['label']}' (반환 {r})")
+                msgs.append(f"버튼 삭제: '{ob[r]['label']}' ({_btn_desc(ob[r])})")
         for r in set(ob) & set(wb):
             if ob[r]["label"] != wb[r]["label"]:
-                msgs.append(f"버튼 문구 변경({r}): '{ob[r]['label']}' → '{wb[r]['label']}'")
+                msgs.append(f"버튼 문구 변경({_btn_desc(wb[r])}): "
+                            f"'{ob[r]['label']}' → '{wb[r]['label']}'")
             if ob[r]["idx"] != wb[r]["idx"]:
-                msgs.append(f"버튼 위치 변경({r}): {ob[r]['idx']} → {wb[r]['idx']}")
+                msgs.append(f"버튼 위치 변경({_btn_desc(wb[r])}): "
+                            f"{ob[r]['idx']} → {wb[r]['idx']}")
+            if ob[r].get("flag") != wb[r].get("flag"):
+                msgs.append(f"버튼 아이콘/속성 변경({_btn_desc(wb[r])}): "
+                            f"'{ob[r].get('flag','-')}' → '{wb[r].get('flag','-')}'")
         # 제어 플래그
         of, wf = o.get("flags", {}), w.get("flags", {})
         for k in sorted(set(of) | set(wf)):
