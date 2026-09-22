@@ -18,6 +18,7 @@ scenario_deploy.py — 배포 전/후 시나리오 수집 + 변경내용 리포�
     원격 접속은 "변경내용 확인" / "최신 가져오기" 를 누른 순간에만 발생한다.
 """
 import os
+import glob
 import json
 import time
 import base64
@@ -589,23 +590,42 @@ def check(force=False):
         _mirror_viewer(cfg)
 
     os.makedirs(REPORT_DIR, exist_ok=True)
-    key = f"{fetch['과거']['sig']}__{new_sig}"
+    # 리포트 캐시 키에 분석기 버전을 넣는다. 넣지 않으면 시나리오 파일이
+    # 그대로일 때 예전 코드가 만든 리포트가 계속 나와, 분석기를 고쳐도
+    # 화면에 반영되지 않는다(변수/전문/연관 항목이 통째로 빠진 채로 보인다).
+    key = f"v{DIFF.REPORT_VERSION}__{fetch['과거']['sig']}__{new_sig}"
     rpath = os.path.join(REPORT_DIR, key + ".json")
 
+    rep = None
     if os.path.isfile(rpath) and not force:
-        with open(rpath, encoding="utf-8") as f:
-            rep = json.load(f)
-        rep["cached"] = True
-    else:
+        try:
+            with open(rpath, encoding="utf-8") as f:
+                rep = json.load(f)
+            if rep.get("report_version") != DIFF.REPORT_VERSION:
+                rep = None        # 예전 형식 → 버리고 다시 만든다
+            else:
+                rep["cached"] = True
+        except Exception:
+            rep = None
+    if rep is None:
         t0 = time.time()
         so, sto = DIFF.snapshot_folder_cached(_local_dir("old"), _snapcache("old"))
         sn, stn = DIFF.snapshot_folder_cached(_local_dir("new"), _snapcache("new"))
         rep = DIFF.diff_snapshots(so, sn, locate=_make_locator(cfg.get("viewer_env")))
         rep["cached"] = False
+        rep["report_version"] = DIFF.REPORT_VERSION
         rep["elapsed"] = round(time.time() - t0, 1)
         rep["parse"] = {"과거": sto, "운영": stn}
         with open(rpath, "w", encoding="utf-8") as f:
             json.dump(rep, f, ensure_ascii=False)
+        # 예전 버전 리포트는 쌓아둘 이유가 없다
+        for old_rep in glob.glob(os.path.join(REPORT_DIR, "*.json")):
+            if os.path.basename(old_rep) != os.path.basename(rpath) \
+                    and not os.path.basename(old_rep).startswith(f"v{DIFF.REPORT_VERSION}__"):
+                try:
+                    os.unlink(old_rep)
+                except OSError:
+                    pass
 
     rep["meta"] = {
         "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

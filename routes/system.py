@@ -3,6 +3,7 @@
 """시스템 관련 라우트 — 시스템 통계, 설정 조회"""
 
 from flask import Blueprint, jsonify
+import os
 import logging
 from datetime import datetime
 
@@ -77,6 +78,26 @@ def get_version():
                 lines.append(f"          빠짐: {it['why']}")
             if it.get('detail'):
                 lines.append(f"          {it['detail']}")
+        # 시나리오 DIFF 는 분석기 코드가 최신이어도 '캐시된 리포트'가 나올 수
+        # 있다. 버전과 캐시 파일 상태를 같이 보여줘 그 경우를 구분한다.
+        try:
+            import scenario_deploy_diff as _D
+            import scenario_deploy as _DP
+            import glob as _g
+            reps = _g.glob(os.path.join(_DP.REPORT_DIR, "*.json"))
+            cur = [p for p in reps
+                   if os.path.basename(p).startswith(f"v{_D.REPORT_VERSION}__")]
+            lines.append("")
+            lines.append(f"시나리오 DIFF : 분석기 v{_D.REPORT_VERSION} / "
+                         f"스냅샷캐시 v{_D.CACHE_VERSION}")
+            lines.append(f"                리포트 캐시 {len(reps)}건 "
+                         f"(현재 버전 {len(cur)}건)")
+            if reps and not cur:
+                lines.append("                ※ 전부 예전 버전 — '강제 재분석'을 "
+                             "한 번 누르면 새로 만듭니다")
+        except Exception as e:
+            lines.append(f"시나리오 DIFF : 확인 불가 ({e})")
+
         lines.append("")
         if info['up_to_date']:
             lines.append("▶ 실행 중인 코드는 모두 최신입니다.")

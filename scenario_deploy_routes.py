@@ -22,14 +22,21 @@ logger = logging.getLogger(__name__)
 deploy_bp = Blueprint("scenario_deploy", __name__)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-TEMPLATES_DIR = os.path.join(os.path.dirname(_HERE), "templates")
+# 자기 폴더의 templates 를 먼저 본다. 예전에는 상위 폴더를 먼저 봐서,
+# 상위에 templates 폴더가 있으면 덮어쓴 파일이 아니라 그쪽이 서빙됐다.
+TEMPLATES_DIR = os.path.join(_HERE, "templates")
 if not os.path.isdir(TEMPLATES_DIR):
-    TEMPLATES_DIR = os.path.join(_HERE, "templates")
+    TEMPLATES_DIR = os.path.join(os.path.dirname(_HERE), "templates")
 
 
 @deploy_bp.route("/deploy-diff")
 def deploy_page():
-    return send_from_directory(TEMPLATES_DIR, "deploy_diff.html")
+    resp = send_from_directory(TEMPLATES_DIR, "deploy_diff.html")
+    # 화면 파일을 바꿔도 브라우저가 예전 것을 계속 쓰면 '적용 안 됨'이 된다.
+    # 매번 새로 받게 한다(Ctrl+F5 없이도 반영되도록).
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
 
 
 @deploy_bp.route("/api/deploy/check")
