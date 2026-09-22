@@ -130,6 +130,86 @@ def api_selftest():
     return Response("\n".join(L), mimetype="text/plain; charset=utf-8")
 
 
+@deploy_bp.route("/api/deploy/xmlprobe")
+def api_xmlprobe():
+    """수집된 시나리오 파일의 실제 XML 구조를 들여다본다.
+
+    '파일은 읽히는데 블록이 0개'일 때, 문서 구조가 예상과 다른 것이 원인이다.
+    추측하지 말고 실제 태그를 보고 맞춘다.
+    """
+    import glob
+    import xml.etree.ElementTree as ET
+    from flask import Response
+    import scenario_deploy_diff as D
+
+    L = []
+    try:
+        for slot in ("new", "old"):
+            d = DEP._local_dir(slot)
+            files = []
+            for ext in D.SCN_EXT:
+                files += glob.glob(os.path.join(d, "*" + ext))
+            L.append(f"[{DEP.SLOT_NAME[slot]}] {d}")
+            L.append(f"  파일 {len(files)}개"
+                     + (f" (확장자별: " + ", ".join(
+                         f"{e} {len([f for f in files if f.lower().endswith(e)])}개"
+                         for e in D.SCN_EXT) + ")" if files else ""))
+            # 하위 폴더도 있는지 알려준다(수집 경로가 맞는지 확인용)
+            subs = [x for x in glob.glob(os.path.join(d, "*")) if os.path.isdir(x)]
+            if subs:
+                L.append(f"  하위 폴더: {', '.join(os.path.basename(x) for x in subs)}")
+            if not files:
+                L.append("  ★ 시나리오 파일이 없습니다 (수집 경로/확장자 확인)")
+                L.append("")
+                continue
+
+            for path in sorted(files)[:2]:      # 앞 2개만 자세히
+                L.append(f"\n  ── {os.path.basename(path)} "
+                         f"({os.path.getsize(path):,} 바이트)")
+                try:
+                    raw = open(path, "rb").read(400)
+                    L.append(f"     앞부분: {raw[:200].decode('utf-8', 'replace')!r}")
+                except OSError as e:
+                    L.append(f"     ★ 읽기 실패: {e}")
+                    continue
+                try:
+                    root = ET.parse(path).getroot()
+                except Exception as e:
+                    L.append(f"     ★ XML 파싱 실패: {type(e).__name__}: {e}")
+                    continue
+                tag = root.tag
+                nsuri = tag.split("}")[0][1:] if tag.startswith("{") else ""
+                L.append(f"     루트 태그 : {tag}")
+                if nsuri:
+                    L.append(f"     네임스페이스: {nsuri}  ← 태그 이름에 붙습니다")
+                kids = {}
+                for c in root:
+                    k = c.tag.split("}")[-1]
+                    kids[k] = kids.get(k, 0) + 1
+                L.append(f"     자식 태그 : {kids}")
+
+                D._strip_ns(root)
+                nodes = D._find_nodes(root)
+                L.append(f"     찾은 Node : {len(nodes)}개")
+                if nodes:
+                    n0 = nodes[0]
+                    L.append(f"     첫 Node 속성 : {dict(n0.attrib)}")
+                    L.append(f"     첫 Node 자식 : {[c.tag for c in n0]}")
+                    cp = n0.find("CustomProperties")
+                    if cp is None:
+                        L.append("     ★ CustomProperties 가 없습니다")
+                    else:
+                        L.append(f"     CustomProperties 안: {[c.tag for c in cp][:25]}")
+                        L.append(f"     읽어낸 식별자(Sequence): {D._seq_of(n0, cp)!r}")
+                snap = D.snapshot_file(path)
+                L.append(f"     → 최종 블록 수: {len(snap['blocks']) if snap else '파싱실패'}")
+            L.append("")
+    except Exception as e:
+        logger.exception("XML 구조 확인 오류")
+        L.append(f"★ 오류: {e}")
+    return Response("\n".join(L), mimetype="text/plain; charset=utf-8")
+
+
 @deploy_bp.route("/api/deploy/peek")
 def api_peek():
     """매니페스트만 조회해 변경 여부만 알려준다 (파일 전송 없음, 약 1~2초)."""

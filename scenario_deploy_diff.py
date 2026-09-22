@@ -18,7 +18,10 @@ import glob
 import json
 import difflib
 import hashlib
+import logging
 import xml.etree.ElementTree as ET
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -29,12 +32,12 @@ MAX_FULL_CHARS = 8000         # 리뷰용 '블록 전문'에 담을 스크립트
 
 # 스냅샷 캐시 구조/파서가 바뀌면 올린다. 올리지 않으면 예전 캐시가 그대로
 # 재사용돼서 파서를 고쳐도 반영되지 않는다(파일이 안 바뀌면 재파싱을 안 하므로).
-CACHE_VERSION = 3
+CACHE_VERSION = 4   # 파서 변경(네임스페이스/구조 관용) → 전량 재파싱
 
 # 리포트(diff 결과) 형식 버전. 리포트에 담는 항목이 바뀌면 올린다.
 # scenario_deploy.check() 가 캐시 키와 검증에 쓴다 — 올리지 않으면
 # 시나리오가 그대로일 때 예전 형식 리포트가 계속 나온다.
-REPORT_VERSION = 2
+REPORT_VERSION = 3
 
 
 # ══════════════════════════════════════════════════════════════
@@ -228,17 +231,77 @@ def _h(*parts):
     return m.hexdigest()[:12]
 
 
+def _strip_ns(root):
+    """태그에서 XML 네임스페이스를 떼어낸다.
+
+    문서에 기본 네임스페이스(xmlns=...)가 선언돼 있으면 태그 이름이
+    '{uri}Node' 가 되어 findall('./Nodes/Node') 가 하나도 못 찾는다.
+    파일은 정상 파싱되므로 '블록 0개'로만 보여 원인을 찾기 어렵다.
+    """
+    for el in root.iter():
+        if isinstance(el.tag, str) and el.tag.startswith("{"):
+            el.tag = el.tag.split("}", 1)[1]
+        for k in list(el.attrib):
+            if k.startswith("{"):
+                el.attrib[k.split("}", 1)[1]] = el.attrib.pop(k)
+    return root
+
+
+def _find_nodes(root):
+    """Node 요소 찾기. 문서 구조가 조금 달라도 찾아내도록 단계적으로 시도."""
+    for xp in ("./Nodes/Node", "./Node", ".//Nodes/Node"):
+        found = root.findall(xp)
+        if found:
+            return found
+    # 마지막 수단: 문서 어디에 있든 Node 태그 전부 (Links 안의 참조는
+    # CustomProperties 가 없어 아래에서 걸러진다)
+    return root.findall(".//Node")
+
+
+def _find_links(root):
+    for xp in ("./Links/Link", "./Link", ".//Links/Link"):
+        found = root.findall(xp)
+        if found:
+            return found
+    return root.findall(".//Link")
+
+
+def _seq_of(node, cp):
+    """블록 식별자. Sequence 가 없으면 대체 필드를 차례로 본다."""
+    for tag in ("Sequence", "Seq", "Index", "Order"):
+        v = _t(cp, tag)
+        if v:
+            return v
+    # CustomProperties 안쪽 깊은 곳에 있을 수도 있다
+    if cp is not None:
+        for tag in ("Sequence", "Seq"):
+            el = cp.find(f".//{tag}")
+            if el is not None and (el.text or "").strip():
+                return el.text.strip()
+    # 노드 속성으로 들어있는 경우
+    for attr in ("Sequence", "Seq", "Id"):
+        v = (node.get(attr) or "").strip()
+        if v:
+            return v
+    return ""
+
+
 def snapshot_file(path):
     """단일 시나리오 파일 → 블록(Sequence) 단위 상세 스냅샷 + 연결(Link)."""
     try:
-        root = ET.parse(path).getroot()
-    except ET.ParseError:
+        root = _strip_ns(ET.parse(path).getroot())
+    except ET.ParseError as e:
+        logger.warning("시나리오 XML 파싱 실패 %s: %s", os.path.basename(path), e)
+        return None
+    except Exception as e:                     # 인코딩/권한 등
+        logger.warning("시나리오 파일 읽기 실패 %s: %s", os.path.basename(path), e)
         return None
 
+    nodes = _find_nodes(root)
     blocks, id2seq = {}, {}
-    for n in root.findall("./Nodes/Node"):
+    for n in nodes:
         cp = n.find("CustomProperties")
-        seq = _t(cp, "Sequence")
+        seq = _seq_of(n, cp)
         nid = n.get("Id")
         if not seq:
             continue
@@ -263,7 +326,7 @@ def snapshot_file(path):
         }
 
     links = []
-    for lk in root.findall("./Links/Link"):
+    for lk in _find_links(root):
         o, d = lk.find("Origin"), lk.find("Destination")
         if o is None or d is None:
             continue
@@ -274,8 +337,16 @@ def snapshot_file(path):
     with open(path, "rb") as f:
         fhash = hashlib.md5(f.read()).hexdigest()[:12]
 
+    if nodes and not blocks:
+        # 노드는 찾았는데 블록이 하나도 안 만들어졌다 = 식별자(Sequence)를
+        # 못 읽은 것. 조용히 '0 블록'으로 넘어가면 원인을 알 수 없다.
+        logger.warning("시나리오 %s: Node %d개를 찾았지만 Sequence 를 읽지 못해 "
+                       "블록이 0개입니다(구조 확인 필요)",
+                       os.path.basename(path), len(nodes))
+
     return {"file": os.path.basename(path), "hash": fhash,
-            "blocks": blocks, "links": links}
+            "blocks": blocks, "links": links,
+            "node_count": len(nodes)}
 
 
 def snapshot_folder(folder):
