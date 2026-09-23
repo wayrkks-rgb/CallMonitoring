@@ -6,6 +6,8 @@
 <script src="/static/vendor/dagre.min.js"></script>
 <script src="/static/vendor/cytoscape.min.js"></script>
 <script src="/static/vendor/cytoscape-dagre.js"></script>
+<!-- 보이는ARS 화면 렌더러 (index.html 과 동일한 단일 소스) -->
+<script src="/static/js/webvoice_render.js?v=2"></script>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Malgun Gothic',-apple-system,sans-serif;color:#2d3748;background:#f5f6fa;font-size:13px}
@@ -259,52 +261,33 @@
   .scr-btn:hover{background:#ffe0c7;}
   .optbar .scr-flow{background:#7048e8;border:none;color:#fff;border-radius:5px;padding:4px 11px;font-size:11px;cursor:pointer;font-weight:700;}
 /* ── 화면 팝업 모달 ── */
-        .wv-modal{display:none;position:fixed;inset:0;z-index:9999;}
-        .wv-modal.open{display:block;}
-        .wv-modal-bg{position:absolute;inset:0;background:rgba(0,0,0,.5);}
-        .wv-modal-box{position:relative;max-width:92vw;max-height:90vh;margin:4vh auto;background:#fff;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);display:flex;flex-direction:column;width:max-content;}
-        .wv-modal-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #eee;font-weight:800;color:#E8590C;font-size:15px;}
-        .wv-modal-x{cursor:pointer;color:#999;font-size:18px;padding:2px 6px;border-radius:6px;}
-        .wv-modal-x:hover{background:#f4f4f4;color:#333;}
-        .wv-modal-body{padding:18px;overflow:auto;}
-        .wv-single{display:flex;justify-content:center;}
-        .wv-flow-scroll{display:flex;gap:8px;align-items:center;overflow-x:auto;padding-bottom:8px;}
-        .wv-flow-item{position:relative;flex:0 0 auto;}
-        .wv-flow-step{position:absolute;top:-8px;left:50%;transform:translateX(-50%);z-index:2;background:#7048e8;color:#fff;font-size:11px;font-weight:700;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(112,72,232,.4);}
-        .wv-flow-arrow{flex:0 0 auto;color:#F47725;font-size:26px;font-weight:700;}
-        /* ── 폰 목업 ── */
-        .wv-phone{width:270px;background:#fff;border:8px solid #2b2b2b;border-radius:26px;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.15);}
-        .wv-top{height:18px;background:#2b2b2b;border-radius:0 0 12px 12px;margin:0 78px;}
-        .wv-head{display:flex;align-items:center;justify-content:center;gap:6px;padding:12px 10px 8px;position:relative;}
-        .wv-logo{width:19px;height:19px;border-radius:50%;background:radial-gradient(circle at 62% 38%,#ffce9e,#F47725 68%);box-shadow:inset -2px -2px 3px rgba(0,0,0,.12);}
-        .wv-co{font-weight:800;font-size:14px;color:#333;letter-spacing:-.3px;}
-        .wv-spk{position:absolute;right:12px;top:10px;font-size:8px;color:#999;text-align:center;line-height:1.3;}
-        .wv-spk span{font-size:7px;}
-        .wv-note{background:#fff3ec;text-align:center;padding:10px;font-weight:800;font-size:12px;color:#333;}
-        .wv-body{padding:14px 12px;min-height:320px;}
-        .wv-foot{display:flex;background:linear-gradient(90deg,#8B7B6B,#a08b78);}
-        .wv-f{flex:1;text-align:center;padding:10px 4px;font-size:9px;color:#fff;line-height:1.5;}
-        .wv-f.act{position:relative;color:#F47725;font-weight:800;}
-        .wv-f.act::before{content:'';position:absolute;inset:4px 6px;background:rgba(255,255,255,.92);border-radius:18px;}
-        .wv-f.act span{position:relative;}
-        .wv-cap{background:#2b2b2b;color:#ffd8b8;font-size:10px;text-align:center;padding:6px;font-weight:700;}
-        .wvm-tit{font-weight:800;font-size:15px;margin-bottom:9px;color:#222;line-height:1.4;}
-        .wvm-txt{color:#555;font-size:11px;line-height:1.7;margin-bottom:9px;}
-        .wvm-str{font-weight:700;font-size:11px;color:#333;margin:11px 0 4px;}
-        .wvm-inp{border:1.5px solid #d5d8dd;border-radius:8px;padding:10px;color:#aaa;font-size:11px;margin-bottom:8px;}
-        .wvm-info{background:#f3f4f6;border-radius:8px;padding:8px;font-size:10px;color:#666;margin-bottom:9px;}
-        .wvm-icon{font-size:30px;text-align:center;margin:12px 0;}
-        .wvm-quick{display:flex;gap:10px;justify-content:center;border-bottom:1px solid #eee;padding-bottom:11px;margin-bottom:9px;}
-        .wvm-q{font-size:10px;font-weight:700;color:#444;text-align:center;display:flex;flex-direction:column;gap:4px;align-items:center;}
-        .wvm-qi{font-size:18px;color:#666;}
-        .wvm-menu{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
-        .wvm-m{border:1px solid #eaecef;border-radius:10px;padding:14px 6px;text-align:center;font-weight:700;font-size:11px;line-height:1.4;color:#333;display:flex;flex-direction:column;gap:7px;align-items:center;}
-        .wvm-mi{font-size:20px;color:#555;}
-        .wvm-btn{padding:11px;border-radius:8px;font-weight:700;font-size:12px;text-align:center;margin-top:8px;}
-        .wvm-btn.o{background:#F47725;color:#fff;}
-        .wvm-btn.ghost{background:#f0f1f3;color:#555;}
-        .wvm-btn2{display:flex;gap:8px;margin-top:11px;}
-        .wvm-btn2 .wvm-btn{flex:1;margin-top:0;}
+        /* 보이는ARS 폰 목업/모달 CSS 는 webvoice_render.js 가 주입 */
+
+  /* ── PDF 저장(인쇄): 업무 흐름 문서만 출력 ──────────────────
+     기존에는 window.print() 가 화면 전체(상단바·시나리오 트리·경로표시)를
+     그대로 찍었고, .doc 가 height:100% + overflow:auto 라 화면에 보이는
+     만큼만 나오고 나머지가 잘렸다. 인쇄 시에는 화면 크롬을 감추고
+     레이아웃 제약(flex/고정높이/스크롤)을 풀어 문서가 여러 장으로 흐르게 한다. */
+  @media print{
+    @page{ size:A4 portrait; margin:12mm 10mm; }
+    html,body{background:#fff!important;height:auto!important;overflow:visible!important}
+    /* 화면 전용 UI 는 인쇄 제외 */
+    .topbar,.side,.crumb,#mapWrap,.optbar,.zoom,.legend,
+    .wv-modal,button,.cf-open,.ago,.scr-flow{display:none!important}
+    /* 뷰포트에 갇힌 레이아웃 해제 → 내용 전체가 페이지로 흐르도록 */
+    .wrap{display:block!important;height:auto!important;overflow:visible!important}
+    .main{display:block!important;min-width:0!important}
+    .canvas{position:static!important;flex:none!important;height:auto!important;overflow:visible!important}
+    .doc{height:auto!important;overflow:visible!important;padding:0!important}
+    .doc-inner{max-width:none!important;margin:0!important}
+    /* 배경·뱃지 색이 빠지지 않도록 */
+    *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+    /* 항목이 페이지 경계에서 갈리지 않게 */
+    .tnodeD,.asec,.cf-card,.card,.sec,.cond,.mtree{page-break-inside:avoid;break-inside:avoid}
+    .step-hd,.ahd,.h{page-break-after:avoid;break-after:avoid}
+    a{text-decoration:none!important;color:inherit!important}
+    .doc-inner>.h{margin-bottom:2mm}
+  }
 </style>
 </head>
 <body>
@@ -348,6 +331,22 @@ cytoscape.use(window.cytoscapeDagre);
 const j=async u=>(await fetch(u)).json();
 const esc=s=>(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const enc=encodeURIComponent;
+
+/* PDF 저장 — 인쇄 CSS(@media print)가 업무 흐름 문서만 남긴다.
+   PDF 기본 파일명은 브라우저가 document.title 로 정하므로 업무명으로 바꿔준다. */
+function printFlow(){
+  const prev = document.title;
+  const el = document.querySelector('.doc-inner .h');
+  const name = ((el && el.textContent) || 'ARS_업무FLOW').trim()
+                 .replace(/[\\/:*?"<>|]/g, '_').slice(0, 80);
+  const stamp = new Date().toISOString().slice(0, 10);
+  document.title = `${name}_업무FLOW_${stamp}`;
+  const restore = () => { document.title = prev;
+                          window.removeEventListener('afterprint', restore); };
+  window.addEventListener('afterprint', restore);
+  window.print();
+  setTimeout(restore, 3000);   // afterprint 미지원 브라우저 대비
+}
 
 async function init(){
   const {envs}=await j('/api/topology/envs');
@@ -556,7 +555,7 @@ async function loadBlocks(){
 
   let h=`<div class="doc-inner">
     <div class="optbar"><span>상세 · 개발자 모드 (요약 구조 + 블록 소스)</span>
-      <span class="warn">블록ID 클릭 시 이동</span><button class="scr-flow" onclick="topoPageScreens()">📱 이 업무 화면 흐름</button><button onclick="window.print()">PDF로 저장</button></div>
+      <span class="warn">블록ID 클릭 시 이동</span><button class="scr-flow" onclick="topoPageScreens()">📱 이 업무 화면 흐름</button><button onclick="printFlow()">PDF로 저장</button></div>
     <div class="h">${esc(d.entry)}</div>
     <div class="docmeta">기준일 ${esc(d.generated)} · 시나리오 ${d.versions.length}개 · 버전 ${esc(d.snapshot_hash)}</div>`;
   h+=nodeHtml(d.tree,0);
@@ -618,7 +617,7 @@ async function loadMenuSummary(){
   }
 
   let h=`<div class="doc-inner">
-    <div class="optbar"><span>업무 구성도 · 현업 제공용</span><span class="warn">기준일 ${esc(d.generated)}</span><button class="scr-flow" onclick="topoPageScreens()">📱 이 업무 화면 흐름</button><button onclick="window.print()">PDF로 저장</button></div>
+    <div class="optbar"><span>업무 구성도 · 현업 제공용</span><span class="warn">기준일 ${esc(d.generated)}</span><button class="scr-flow" onclick="topoPageScreens()">📱 이 업무 화면 흐름</button><button onclick="printFlow()">PDF로 저장</button></div>
     <div class="h">${esc(d.entry)}</div>
     <div class="docmeta">기준일 ${esc(d.generated)} · 시나리오 ${d.versions.length}개 · 버전 ${esc(d.snapshot_hash)}</div>`;
   if(d.toc&&d.toc.length>1){
@@ -687,116 +686,7 @@ async function loadMap(){
   cy.ready(()=>cy.fit(null,40));
 }
 
-/* ===== 보이는ARS 화면 렌더러/모달 ===== */
-/* =====================================================================
- * webvoice_render.js — 보이는ARS 화면 렌더러 + 팝업 모달 (index.html 내장용)
- * ---------------------------------------------------------------------
- *  · 연동정의서 프로토콜(S$HLIxxx;...) → 폰 목업 HTML
- *  · openScreenModal(payload|code, name) : 단일 화면 팝업
- *  · openScreenFlowModal(screens)        : 화면 흐름(여러 장) 팝업
- *  · WV_SCREEN_MAP : 화면코드→이름 (screen_map.json 내장)
- * ===================================================================== */
-
-const WV_SCREEN_MAP = {"HLIA00": {"name": "시작하기 화면", "category": "메인/시작"}, "HLIA01": {"name": "메인 화면", "category": "메인/시작"}, "HLIA10": {"name": "2단 메뉴 화면", "category": "메인/시작"}, "HLIB00": {"name": "메뉴 리스트", "category": "메뉴리스트/고객확인"}, "HLIB01": {"name": "상담사연결 전용 메뉴 리스트", "category": "메뉴리스트/고객확인"}, "HLIB02": {"name": "아코디언 메뉴 리스트 화면", "category": "메뉴리스트/고객확인"}, "HLIB10": {"name": "고객 확인", "category": "메뉴리스트/고객확인"}, "HLIC00": {"name": "1개 항목 입력 (일반)", "category": "입력"}, "HLIC01": {"name": "1개 항목 입력 (SMS인증, 데이터변경불가)", "category": "입력"}, "HLIC02V": {"name": "1개 항목 입력 (보안)", "category": "입력"}, "HLIC03": {"name": "인증번호 입력", "category": "입력"}, "HLIC04V": {"name": "주민등록번호 입력", "category": "입력"}, "HLIC05V": {"name": "보안카드 입력", "category": "입력"}, "HLIC06": {"name": "2개 항목 입력 (일반,일반)", "category": "입력"}, "HLIC07": {"name": "카카오페이 인증", "category": "입력"}, "HLIC07A": {"name": "간편인증", "category": "입력"}, "HLIC07B": {"name": "간편인증 3자통화", "category": "입력"}, "HLIC07C": {"name": "간편인증 3자통화 2", "category": "입력"}, "HLIC08": {"name": "1개 항목 선택", "category": "입력"}, "HLIC09": {"name": "2개 항목 선택", "category": "입력"}, "HLIC10": {"name": "금융기관 선택 및 계좌번호 입력", "category": "입력"}, "HLIC11": {"name": "금융기관/이체일 선택 및 계좌번호 입력", "category": "입력"}, "HLIC12": {"name": "상환방법/이체일 선택", "category": "입력"}, "HLIC13": {"name": "신분증 인증", "category": "입력"}, "HLIC20": {"name": "이메일 입력", "category": "입력"}, "HLID00": {"name": "단일 테이블, 유의사항", "category": "테이블/조회"}, "HLID01": {"name": "다중 테이블, 유의사항", "category": "테이블/조회"}, "HLID10": {"name": "조회 내역 안내 A (혼합형, 메뉴리스트)", "category": "테이블/조회"}, "HLID20": {"name": "조회 내역 안내 B (혼합형, 버튼)", "category": "테이블/조회"}, "HLID21": {"name": "조회 내역 안내 C (혼합형 신규)", "category": "테이블/조회"}, "HLID23": {"name": "신청내역 점검", "category": "테이블/조회"}, "HLID30": {"name": "장문 내용 안내", "category": "테이블/조회"}, "HLID31": {"name": "약정서 안내", "category": "테이블/조회"}, "HLID32": {"name": "동의 여부 확인 A", "category": "테이블/조회"}, "HLID33": {"name": "동의 여부 확인 B", "category": "테이블/조회"}, "HLID34": {"name": "대출상품설명서", "category": "테이블/조회"}, "HLID40": {"name": "동의항목 녹취 (버튼N)", "category": "테이블/조회"}, "HLID41": {"name": "동의항목 녹취 (버튼Y)", "category": "테이블/조회"}, "HLID50": {"name": "입력형 테이블 A (가로형)", "category": "테이블/조회"}, "HLID51": {"name": "입력형 테이블 B (세로형 3열)", "category": "테이블/조회"}, "HLID52": {"name": "입력형 테이블 C (신청금액 토탈)", "category": "테이블/조회"}, "HLID60": {"name": "조회 결과 테이블 (나의 계약정보)", "category": "테이블/조회"}, "HLID61": {"name": "PDF 뷰 화면", "category": "테이블/조회"}, "HLIE00": {"name": "안내 화면 A (기본형)", "category": "안내"}, "HLIE01": {"name": "안내 화면 B (상담사 연결 대기정보)", "category": "안내"}, "HLIE02": {"name": "안내 화면 C (안내 및 버튼)", "category": "안내"}, "HLIE03": {"name": "안내 화면 E (안내 및 테이블)", "category": "안내"}, "HLIE04": {"name": "안내 화면 F (안내 및 유의사항)", "category": "안내"}, "HLIE05": {"name": "안내 화면 G (안내, 테이블, 버튼)", "category": "안내"}, "HLIE06": {"name": "안내 화면 H (URL 연결)", "category": "안내"}, "HLIF00": {"name": "신계약모니터링 초기화면", "category": "신계약모니터링"}, "HLIF10": {"name": "개인(신용)정보 수집 및 모니터링 동의", "category": "신계약모니터링"}, "HLIF20V": {"name": "휴대폰 본인인증 - 정보 입력", "category": "신계약모니터링"}, "HLIF21": {"name": "휴대폰 본인인증 - 인증번호 입력", "category": "신계약모니터링"}, "HLIF30": {"name": "대상계약 확인 - 대상계약 부재", "category": "신계약모니터링"}, "HLIF31": {"name": "대상계약 확인 - 대상계약 존재", "category": "신계약모니터링"}, "HLIF40": {"name": "모니터링 진행", "category": "신계약모니터링"}, "HLIF41": {"name": "모니터링 진행 (정답 표기)", "category": "신계약모니터링"}, "HLIF42": {"name": "적합성 원칙 확인", "category": "신계약모니터링"}, "HLIF50": {"name": "모니터링 완료", "category": "신계약모니터링"}};
-
-// 프로토콜 파서
-function _wvParse(payload) {
-  return (payload || '').split(';').filter(s => s).map(s => s.split('$'));
-}
-function _wvClean(s) { return (s || '').replace(/\|/g, ' '); }
-function _wvEsc(s) { return (s == null ? '' : String(s)).replace(/[&<>]/g,
-  m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m])); }
-
-// 프로토콜 → 폰 목업 HTML
-function renderWebVoiceScreen(code, name, payload) {
-  const kv = _wvParse(payload || ('S$' + code));
-  const g = k => kv.filter(p => p && p[0] === k);
-  const mute = g('MUTE');
-  const muteOn = mute.length && mute[0][2] === 'ON';
-  let body = '';
-
-  g('NOT').forEach(p => { if (p[2] === 'ON') body += `<div class="wvm-info">📢 ${_wvEsc(_wvClean(p[4]))}</div>`; });
-  if (g('IMG').length) body += `<div class="wvm-icon">🎧</div>`;
-  g('TIT').forEach(p => { if (p[3]) body += `<div class="wvm-tit">${_wvClean(p[3])}</div>`; });
-  g('TXT').forEach(p => { if (p[3]) body += `<div class="wvm-txt">${_wvClean(p[3])}</div>`; });
-  g('STR').forEach(p => { if (p[2]) body += `<div class="wvm-str">${_wvClean(p[2])}</div>`; });
-  ['INP', 'INP2', 'INPH'].forEach(k => g(k).forEach(p => {
-    let ph = '';
-    [p[4], p[3], p[2]].forEach(c => { if (c && !/^\d+$/.test(c) && !ph) ph = c; });
-    body += `<div class="wvm-inp">${_wvEsc(_wvClean(ph) || '입력')}</div>`;
-  }));
-  g('INPTXT').forEach(p => { if (p[2]) body += `<div class="wvm-btn o">${_wvEsc(_wvClean(p[2]))}</div>`; });
-  g('BTNZ').forEach(p => { if (p[2]) body += `<div class="wvm-btn ghost">${_wvEsc(_wvClean(p[2]))}</div>`; });
-  const q = g('BTNQ2');
-  if (q.length) body += '<div class="wvm-quick">' + q.map(p => `<div class="wvm-q"><span class="wvm-qi">▦</span>${_wvEsc(_wvClean(p[3]))}</div>`).join('') + '</div>';
-  const m = g('BTNM');
-  if (m.length) body += '<div class="wvm-menu">' + m.map(p => `<div class="wvm-m"><div class="wvm-mi">📄</div>${_wvClean(p[3])}</div>`).join('') + '</div>';
-  ['BTN2', 'BTNE2'].forEach(k => {
-    const b = g(k);
-    if (b.length) body += '<div class="wvm-btn2">' + b.map((p, i) => `<div class="wvm-btn ${i === b.length - 1 ? 'o' : 'ghost'}">${_wvEsc(_wvClean(p[2]))}</div>`).join('') + '</div>';
-  });
-
-  const spk = muteOn ? '🔊<br><span>음성ON</span>' : '🔈<br><span>음성OFF</span>';
-  return `<div class="wv-phone">
-    <div class="wv-top"></div>
-    <div class="wv-head"><span class="wv-logo"></span><span class="wv-co">한화생명</span><span class="wv-spk">${spk}</span></div>
-    <div class="wv-note">삶의 가치를 더하는 한화생명입니다.</div>
-    <div class="wv-body">${body || "<div class='wvm-txt'>(" + code + ")</div>"}</div>
-    <div class="wv-foot"><div class="wv-f">🔊<br>음성 ARS</div><div class="wv-f act"><span>🎧<br>상담사</span></div><div class="wv-f">✕<br>통화종료</div></div>
-    <div class="wv-cap">${_wvEsc(code)}${name ? ' · ' + _wvEsc(name) : ''}</div>
-  </div>`;
-}
-
-// 모달 인프라
-function _ensureScreenModal() {
-  let m = document.getElementById('wvScreenModal');
-  if (m) return m;
-  m = document.createElement('div');
-  m.id = 'wvScreenModal';
-  m.className = 'wv-modal';
-  m.innerHTML = `<div class="wv-modal-bg" onclick="closeScreenModal()"></div>
-    <div class="wv-modal-box">
-      <div class="wv-modal-head"><span id="wvModalTitle">화면 미리보기</span>
-        <span class="wv-modal-x" onclick="closeScreenModal()">✕</span></div>
-      <div class="wv-modal-body" id="wvModalBody"></div>
-    </div>`;
-  document.body.appendChild(m);
-  return m;
-}
-function closeScreenModal() {
-  const m = document.getElementById('wvScreenModal');
-  if (m) m.classList.remove('open');
-}
-
-// 단일 화면 팝업 (payload 있으면 실데이터, 없으면 코드만)
-function openScreenModal(code, name, payload) {
-  const m = _ensureScreenModal();
-  document.getElementById('wvModalTitle').textContent =
-    '📱 ' + code + (name ? ' · ' + name : '');
-  document.getElementById('wvModalBody').innerHTML =
-    `<div class="wv-single">${renderWebVoiceScreen(code, name || (WV_SCREEN_MAP[code] || {}).name, payload)}</div>`;
-  m.classList.add('open');
-}
-
-// 화면 흐름 팝업 (여러 장 나란히) — screens: [{code,name,payload}]
-function openScreenFlowModal(screens, title) {
-  const m = _ensureScreenModal();
-  document.getElementById('wvModalTitle').textContent = title || '📱 화면 진행 흐름';
-  const cards = (screens || []).map((s, i) => {
-    const nm = s.name || (WV_SCREEN_MAP[s.code] || {}).name || '';
-    const arrow = i > 0 ? '<div class="wv-flow-arrow">›</div>' : '';
-    return arrow + `<div class="wv-flow-item">
-      <div class="wv-flow-step">${i + 1}</div>
-      ${renderWebVoiceScreen(s.code, nm, s.payload)}
-    </div>`;
-  }).join('');
-  document.getElementById('wvModalBody').innerHTML =
-    `<div class="wv-flow-scroll">${cards || '<div style="padding:40px;color:#aaa;">표시할 화면이 없습니다.</div>'}</div>`;
-  m.classList.add('open');
-}
-
-// ESC 닫기
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeScreenModal(); });
+/* 보이는ARS 화면 렌더러/모달 → /static/js/webvoice_render.js (단일 소스) */
 
 
 /* ===== topology 화면 미리보기 연동 ===== */

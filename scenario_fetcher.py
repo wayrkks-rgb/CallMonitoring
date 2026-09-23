@@ -27,7 +27,24 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_ROOT = os.path.join(BASE_DIR, "scenario_cache")
 
 SSH_OPTS = ['-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=10',
-            '-o', 'ServerAliveCountMax=3', '-o', 'StrictHostKeyChecking=accept-new']
+            '-o', 'ServerAliveCountMax=3', '-o', 'StrictHostKeyChecking=accept-new',
+            # 웹 요청에서 실행된다 — 비밀번호를 물어볼 상대가 없으므로
+            # 기다리지 말고 즉시 실패시킨다 (원인이 드러나도록)
+            '-o', 'BatchMode=yes']
+
+
+def _key_opts(ssh_alias):
+    """config.json 에 등록된 SSH 키가 있으면 -i 옵션으로 쓴다."""
+    try:
+        from scenario_deploy import _find_server
+    except Exception:
+        return []
+    _u, _s, host = (ssh_alias or '').rpartition('@')
+    srv = _find_server(host or ssh_alias)
+    key = (srv or {}).get('ssh_key_path') or ''
+    if key and os.path.exists(key):
+        return ['-i', key, '-o', 'IdentitiesOnly=yes']
+    return []
 
 
 def _sig_path(env):
@@ -42,9 +59,11 @@ def remote_signature(ssh_alias, output_dir):
     ps = (f"Get-ChildItem -Path '{output_dir}\\*.dxml','{output_dir}\\*.xml' "
           f"-ErrorAction SilentlyContinue | "
           f"ForEach-Object {{ $_.Name + '|' + $_.Length + '|' + $_.LastWriteTimeUtc.Ticks }}")
-    cmd = ['ssh'] + SSH_OPTS + [ssh_alias, 'powershell', '-NoProfile', '-Command', ps]
+    cmd = (['ssh'] + SSH_OPTS + _key_opts(ssh_alias)
+           + [ssh_alias, 'powershell', '-NoProfile', '-Command', ps])
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+                           stdin=subprocess.DEVNULL,
                            encoding='utf-8', errors='ignore')
         if r.returncode != 0:
             logger.error(f"원격 서명 조회 실패: {r.stderr.strip()}")
@@ -75,11 +94,12 @@ def pull(env, ssh_alias, output_dir, force=False):
 
     # tar 스트림으로 폴더 통째 수신 (Windows 10/Server 2019+ 내장 tar.exe)
     ps = f"cd /d {output_dir} && tar cf - *.dxml *.xml"
-    cmd = ['ssh'] + SSH_OPTS + [ssh_alias, ps]
+    cmd = ['ssh'] + SSH_OPTS + _key_opts(ssh_alias) + [ssh_alias, ps]
     try:
         with tempfile.NamedTemporaryFile(suffix='.tar', delete=False) as tf:
             tar_path = tf.name
-            r = subprocess.run(cmd, stdout=tf, stderr=subprocess.PIPE, timeout=120)
+            r = subprocess.run(cmd, stdout=tf, stderr=subprocess.PIPE,
+                               stdin=subprocess.DEVNULL, timeout=120)
         if r.returncode != 0:
             os.unlink(tar_path)
             return False, f"pull 실패: {r.stderr.decode('utf-8','ignore').strip()}"

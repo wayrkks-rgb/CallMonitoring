@@ -18,6 +18,7 @@ scenario_deploy.py — 배포 전/후 시나리오 수집 + 변경내용 리포�
     원격 접속은 "변경내용 확인" / "최신 가져오기" 를 누른 순간에만 발생한다.
 """
 import os
+import glob
 import json
 import time
 import base64
@@ -40,7 +41,12 @@ REPORT_DIR = os.path.join(BASE_DIR, "deploy_reports")
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
 SSH_OPTS = ['-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15',
-            '-o', 'ServerAliveCountMax=3', '-o', 'StrictHostKeyChecking=accept-new']
+            '-o', 'ServerAliveCountMax=3', '-o', 'StrictHostKeyChecking=accept-new',
+            # 웹 요청에서 실행되므로 비밀번호를 물어볼 상대가 없다. BatchMode 가
+            # 없으면 ssh 가 입력을 기다리며 멈춰 있다가 타임아웃까지 가고,
+            # 화면에는 '900초 초과'만 남아 원인이 보이지 않는다.
+            # 키 인증이 안 되면 즉시 실패하게 해서 사유를 드러낸다.
+            '-o', 'BatchMode=yes']
 
 # 변경 파일이 이 수(또는 이 비율)를 넘으면 델타보다 전체가 유리
 DELTA_MAX_FILES = 120
@@ -48,10 +54,16 @@ DELTA_MAX_RATIO = 0.35
 
 DEFAULTS = {
     "ssh": "",
+    "ssh_port": 22,         # 원격 SSH 포트 (ssh 는 -p, scp 는 -P 로 전달)
     "base": r"C:\TEMP\시나리오",
     "new_dir": "운영",
     "old_dir": "과거",
-    "output_dir": "OUTPUT",
+    # 비우면 시나리오 폴더 자체를 본다. OUTPUT 같은 하위 폴더는 수집 대상이
+    # 아니다(원격 조회가 -File 로 최상위만 훑는다).
+    "output_dir": "",
+    # 비교 대상 확장자. OUTPUT 의 .dxml 은 배포 산출물이라 구조가 달라
+    # 기본은 시나리오 폴더의 .xml 을 본다.
+    "file_ext": ".xml",
     "viewer_env": "",       # 지정 시 운영본을 scenario_cache/<env>/ 로 미러
     "verify": "hash",       # hash=내용해시까지 확인(권장) / fast=크기+수정시각만
 }
@@ -66,6 +78,56 @@ def load_cfg():
     except Exception:
         pass
     return cfg
+
+
+def save_cfg(patch):
+    """
+    시나리오 경로/접속 설정 저장 (config.json 의 scenario_deploy 블록).
+    DEFAULTS 에 있는 키만 반영하고, verify 는 허용값으로 정규화한다.
+    반환: (ok, cfg, error)
+    """
+    from config_manager import load_config, save_config
+
+    cfg = load_cfg()
+    for k in DEFAULTS:
+        if k in (patch or {}):
+            cfg[k] = str(patch[k] if patch[k] is not None else "").strip()
+    if cfg.get("verify") not in ("hash", "fast"):
+        cfg["verify"] = "hash"
+    # 포트는 숫자로 저장 (빈 값/이상값은 22)
+    raw_port = str(cfg.get("ssh_port") or "").strip()
+    if raw_port and not raw_port.isdigit():
+        return False, cfg, "SSH 포트는 숫자로 입력하세요"
+    cfg["ssh_port"] = ssh_port({"ssh_port": raw_port or 22})
+    if not cfg.get("base"):
+        return False, cfg, "시나리오 기준 경로(base)를 입력하세요"
+    if not cfg.get("new_dir") or not cfg.get("old_dir"):
+        return False, cfg, "운영/과거 폴더명을 입력하세요"
+
+    full = load_config()
+    if full is None:
+        return False, cfg, "config.json 을 읽을 수 없습니다"
+    full["scenario_deploy"] = cfg
+    if not save_config(full):
+        return False, cfg, "config.json 저장 실패"
+    return True, cfg, None
+
+
+def _ext_ps(exts):
+    """확장자 튜플 → PowerShell 배열 리터럴  ('.xml','.dxml')"""
+    return ",".join("'" + e + "'" for e in (exts or (".xml",)))
+
+
+def scn_exts(cfg=None):
+    """비교 대상 확장자 튜플. 설정값(쉼표 구분)을 정규화한다."""
+    raw = ((cfg or load_cfg()).get("file_ext") or ".xml")
+    out = []
+    for e in str(raw).replace(";", ",").split(","):
+        e = e.strip().lower()
+        if not e:
+            continue
+        out.append(e if e.startswith(".") else "." + e)
+    return tuple(out) or (".xml",)
 
 
 def _remote_dir(cfg, slot):
@@ -93,18 +155,142 @@ def _q(s):
     return str(s).replace("'", "''")
 
 
-def _ps(alias, script, timeout=300):
+def ssh_port(cfg=None):
+    """설정된 SSH 포트 (기본 22). 범위를 벗어나면 22로."""
+    try:
+        p = int((cfg or load_cfg()).get("ssh_port") or 22)
+    except (TypeError, ValueError):
+        return 22
+    return p if 1 <= p <= 65535 else 22
+
+
+def _port_opt(port, scp=False):
+    """포트 옵션. ssh 는 -p, scp 는 -P 로 서로 다르다."""
+    if not port or int(port) == 22:
+        return []
+    return ['-P' if scp else '-p', str(int(port))]
+
+
+def _find_server(host):
+    """config.json 의 remote_servers 에서 이 호스트에 해당하는 서버를 찾는다."""
+    if not host:
+        return None
+    try:
+        from config_manager import load_config
+        servers = (load_config() or {}).get('remote_servers', []) or []
+    except Exception:
+        return None
+    h = host.strip().lower()
+    for s in servers:
+        for field in ('ip', 'hostname', 'label'):
+            if (s.get(field) or '').strip().lower() == h:
+                return s
+    return None
+
+
+def ssh_identity(cfg=None):
+    """설정의 ssh 값 → (접속대상, 추가옵션).
+
+    시나리오 배포는 그동안 ~/.ssh/config 의 Host alias 만 썼다. 그래서 서버
+    관리에서 SSH 키를 등록해 둔 서버인데도 그 키를 쓰지 않고, 비밀번호 인증으로
+    떨어져 입력을 기다렸다. config.json 에 같은 호스트가 있으면 거기 등록된
+    ssh_key_path / user / ssh_port 를 가져다 쓴다.
+
+    alias 가 config.json 에 없으면(순수 ~/.ssh/config alias) 원래대로 둔다.
+    """
+    cfg = cfg or load_cfg()
+    raw = (cfg.get('ssh') or '').strip()
+    if not raw:
+        return None, [], None
+
+    user, _, host = raw.rpartition('@')
+    srv = _find_server(host or raw)
+    if srv is None:
+        return raw, [], None          # ssh config alias 로 간주 — 건드리지 않음
+
+    key = (srv.get('ssh_key_path') or '').strip()
+    user = user or (srv.get('user') or '').strip()
+    # 라벨로 찾았을 수 있으니(라벨은 접속 주소가 아니다) IP 를 우선한다.
+    addr = (srv.get('ip') or '').strip() or (srv.get('hostname') or '').strip() or (host or raw)
+    target = f"{user}@{addr}" if user else addr
+
+    opts = []
+    note = None
+    if key and os.path.exists(key):
+        # IdentitiesOnly: 에이전트에 다른 키가 많으면 그것들을 먼저 시도하다
+        # 서버의 인증 시도 횟수를 넘겨 거절당한다.
+        opts += ['-i', key, '-o', 'IdentitiesOnly=yes']
+    elif key:
+        note = f"등록된 SSH 키 파일이 없습니다: {key}"
+    else:
+        note = "이 서버에 SSH 키가 등록돼 있지 않습니다 (서버 관리 > SSH 키 등록)"
+    return target, opts, note
+
+
+def ssh_port_for(cfg=None):
+    """시나리오 설정의 포트. 미지정(22)이면 config.json 서버의 포트를 따른다."""
+    cfg = cfg or load_cfg()
+    p = ssh_port(cfg)
+    if p != 22:
+        return p
+    raw = (cfg.get('ssh') or '').strip()
+    _u, _s, host = raw.rpartition('@')
+    srv = _find_server(host or raw)
+    try:
+        return int(srv.get('ssh_port') or 22) if srv else 22
+    except (TypeError, ValueError):
+        return 22
+
+
+def _friendly_ssh_error(stderr, target):
+    """ssh stderr → 사람이 읽을 수 있는 한 줄."""
+    e = (stderr or '').strip()
+    low = e.lower()
+    if 'permission denied' in low:
+        return (f"{target} 키 인증 거부 — 서버 관리에서 이 서버의 SSH 키를 "
+                f"등록/재등록하세요 (원문: {e.splitlines()[0][:120]})")
+    if 'connection refused' in low or 'connection timed out' in low:
+        return f"{target} 접속 불가 — 주소/포트를 확인하세요 (원문: {e.splitlines()[0][:120]})"
+    if 'host key verification failed' in low:
+        return f"{target} 호스트 키 검증 실패 — known_hosts 를 확인하세요"
+    return e[:300] or '원인 미상'
+
+
+def _ps(alias, script, timeout=300, port=None):
     prefix = ("$ErrorActionPreference='SilentlyContinue';"
               "$ProgressPreference='SilentlyContinue';"
               "[Console]::OutputEncoding=[Text.Encoding]::UTF8;")
     enc = base64.b64encode((prefix + script).encode("utf-16-le")).decode("ascii")
-    cmd = ['ssh'] + SSH_OPTS + [alias, 'powershell', '-NoProfile',
-                                '-NonInteractive', '-EncodedCommand', enc]
-    return subprocess.run(cmd, capture_output=True, text=True,
-                          encoding='utf-8', errors='ignore', timeout=timeout)
+
+    # 설정에 등록된 키로 접속한다(없으면 원래 alias 그대로)
+    target, key_opts, note = ssh_identity()
+    if target and alias == (load_cfg().get('ssh') or '').strip():
+        alias = target
+    else:
+        key_opts = []                 # 다른 대상이면 그 서버의 키를 쓰면 안 된다
+    if note:
+        logger.warning("시나리오 SSH: %s", note)
+
+    cmd = (['ssh'] + SSH_OPTS + key_opts
+           + _port_opt(port if port is not None else ssh_port_for())
+           + [alias, 'powershell', '-NoProfile',
+              '-NonInteractive', '-EncodedCommand', enc])
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              encoding='utf-8', errors='ignore',
+                              # 비밀번호 입력을 기다리지 못하게 한다. 이게 없으면
+                              # ssh 가 서버 콘솔의 입력을 붙잡고 요청이 멈춘다.
+                              stdin=subprocess.DEVNULL, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # 기본 메시지는 명령 전체(base64 스크립트 포함)를 쏟아내 읽을 수가 없다.
+        raise RuntimeError(
+            f"{alias} 응답이 {timeout}초 안에 오지 않았습니다. "
+            f"시나리오 폴더가 매우 크거나, 원격 작업이 멈춰 있습니다."
+        ) from None
 
 
-def remote_manifest(alias, remote_dir, verify="hash"):
+def remote_manifest(alias, remote_dir, verify="hash", exts=None):
+    exts = exts or scn_exts()
     """
     원격 폴더의 시나리오 파일 목록 → {파일명소문자: [원본명, 크기, ticks, md5?]}
 
@@ -120,7 +306,7 @@ def remote_manifest(alias, remote_dir, verify="hash"):
               "if(-not (Test-Path -LiteralPath $d)){'__MISSING__';exit};"
               "$md5=[Security.Cryptography.MD5]::Create();"
               "Get-ChildItem -LiteralPath $d -File | "
-              "Where-Object { $_.Extension -in '.dxml','.xml' } | "
+              f"Where-Object {{ $_.Extension -in {_ext_ps(exts)} }} | "
               "ForEach-Object { "
               "  $fs=[IO.File]::OpenRead($_.FullName);"
               "  $h=[BitConverter]::ToString($md5.ComputeHash($fs)).Replace('-','');"
@@ -130,7 +316,7 @@ def remote_manifest(alias, remote_dir, verify="hash"):
         ps = (f"$d='{_q(remote_dir)}';"
               "if(-not (Test-Path -LiteralPath $d)){'__MISSING__';exit};"
               "Get-ChildItem -LiteralPath $d -File | "
-              "Where-Object { $_.Extension -in '.dxml','.xml' } | "
+              f"Where-Object {{ $_.Extension -in {_ext_ps(exts)} }} | "
               "ForEach-Object { $_.Name + '|' + $_.Length + '|' + $_.LastWriteTimeUtc.Ticks }")
     r = _ps(alias, ps, timeout=90)
     if r.returncode != 0:
@@ -163,13 +349,21 @@ def _fetch_tgz(alias, build_script, rtmp):
              build_script + f";if(Test-Path -LiteralPath '{_q(rtmp)}'){{'OK'}}else{{'FAIL'}}",
              timeout=900)
     if mk.returncode != 0 or 'OK' not in (mk.stdout or ''):
-        raise RuntimeError((mk.stderr or "").strip() or "원격 아카이브 생성 실패")
+        raise RuntimeError(_friendly_ssh_error(mk.stderr, alias) or "원격 아카이브 생성 실패")
 
     fd, local = tempfile.mkstemp(suffix=".tgz")
     os.close(fd)
-    sp = subprocess.run(['scp'] + SSH_OPTS +
-                        [f'{alias}:{rtmp.replace(chr(92), "/")}', local],
-                        capture_output=True, text=True, timeout=1800)
+    scp_target, key_opts, _note = ssh_identity()
+    if not scp_target or alias != (load_cfg().get('ssh') or '').strip():
+        scp_target, key_opts = alias, []
+    try:
+        sp = subprocess.run(['scp'] + SSH_OPTS + key_opts
+                            + _port_opt(ssh_port_for(), scp=True)
+                            + [f'{scp_target}:{rtmp.replace(chr(92), "/")}', local],
+                            capture_output=True, text=True,
+                            stdin=subprocess.DEVNULL, timeout=1800)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"{alias} 파일 전송이 1800초를 넘었습니다") from None
     if sp.returncode != 0:                       # scp 불가 → base64 폴백
         try:
             os.unlink(local)
@@ -215,13 +409,24 @@ def _extract(tgz, dest, wipe):
     for f in os.listdir(dest):
         p = os.path.join(dest, f)
         if os.path.isfile(p) and not f.startswith('.') \
-                and not f.lower().endswith(DIFF.SCN_EXT):
+                and not f.lower().endswith(tuple(scn_exts())):
             os.unlink(p)
 
 
-def _pull_full(alias, remote_dir, dest):
+def _pull_full(alias, remote_dir, dest, exts=None):
+    exts = exts or scn_exts()
     rtmp = f"C:\\Windows\\Temp\\scn_{int(time.time()*1000)}.tgz"
-    script = f"tar -czf '{_q(rtmp)}' -C '{_q(remote_dir)}' ."
+    # 폴더를 통째로 담으면 OUTPUT 같은 하위 폴더까지 전송된다(수십 MB 낭비).
+    # 최상위의 대상 확장자 파일만 모아서 보낸다.
+    stage = f"C:\\Windows\\Temp\\scnfull_{int(time.time()*1000)}"
+    script = (
+        f"$d='{_q(remote_dir)}';$s='{_q(stage)}';"
+        f"New-Item -ItemType Directory -Force -Path $s | Out-Null;"
+        f"Get-ChildItem -LiteralPath $d -File | "
+        f"Where-Object {{ $_.Extension -in {_ext_ps(exts)} }} | "
+        f"ForEach-Object {{ Copy-Item -LiteralPath $_.FullName -Destination $s -Force }};"
+        f"tar -czf '{_q(rtmp)}' -C $s .;"
+        f"Remove-Item -LiteralPath $s -Recurse -Force")
     tgz = _fetch_tgz(alias, script, rtmp)
     try:
         _extract(tgz, dest, wipe=True)
@@ -419,23 +624,43 @@ def check(force=False):
         _mirror_viewer(cfg)
 
     os.makedirs(REPORT_DIR, exist_ok=True)
-    key = f"{fetch['과거']['sig']}__{new_sig}"
+    # 리포트 캐시 키에 분석기 버전을 넣는다. 넣지 않으면 시나리오 파일이
+    # 그대로일 때 예전 코드가 만든 리포트가 계속 나와, 분석기를 고쳐도
+    # 화면에 반영되지 않는다(변수/전문/연관 항목이 통째로 빠진 채로 보인다).
+    key = f"v{DIFF.REPORT_VERSION}__{fetch['과거']['sig']}__{new_sig}"
     rpath = os.path.join(REPORT_DIR, key + ".json")
 
+    rep = None
     if os.path.isfile(rpath) and not force:
-        with open(rpath, encoding="utf-8") as f:
-            rep = json.load(f)
-        rep["cached"] = True
-    else:
+        try:
+            with open(rpath, encoding="utf-8") as f:
+                rep = json.load(f)
+            if rep.get("report_version") != DIFF.REPORT_VERSION:
+                rep = None        # 예전 형식 → 버리고 다시 만든다
+            else:
+                rep["cached"] = True
+        except Exception:
+            rep = None
+    if rep is None:
         t0 = time.time()
-        so, sto = DIFF.snapshot_folder_cached(_local_dir("old"), _snapcache("old"))
-        sn, stn = DIFF.snapshot_folder_cached(_local_dir("new"), _snapcache("new"))
+        exts = scn_exts(cfg)
+        so, sto = DIFF.snapshot_folder_cached(_local_dir("old"), _snapcache("old"), exts)
+        sn, stn = DIFF.snapshot_folder_cached(_local_dir("new"), _snapcache("new"), exts)
         rep = DIFF.diff_snapshots(so, sn, locate=_make_locator(cfg.get("viewer_env")))
         rep["cached"] = False
+        rep["report_version"] = DIFF.REPORT_VERSION
         rep["elapsed"] = round(time.time() - t0, 1)
         rep["parse"] = {"과거": sto, "운영": stn}
         with open(rpath, "w", encoding="utf-8") as f:
             json.dump(rep, f, ensure_ascii=False)
+        # 예전 버전 리포트는 쌓아둘 이유가 없다
+        for old_rep in glob.glob(os.path.join(REPORT_DIR, "*.json")):
+            if os.path.basename(old_rep) != os.path.basename(rpath) \
+                    and not os.path.basename(old_rep).startswith(f"v{DIFF.REPORT_VERSION}__"):
+                try:
+                    os.unlink(old_rep)
+                except OSError:
+                    pass
 
     rep["meta"] = {
         "generated": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

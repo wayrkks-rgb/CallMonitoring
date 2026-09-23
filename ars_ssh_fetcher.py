@@ -30,6 +30,8 @@ ARS 로그 접근 — SSH(Windows OpenSSH) 대체 경로  [UNC 대비책 / 장�
 """
 
 import base64
+import os
+import re
 import logging
 import subprocess
 from pathlib import Path
@@ -38,6 +40,20 @@ from ars_fetcher import ArsLogFetcher, _channel_of
 from config_manager import get_enabled_servers, get_log_paths, get_server_label
 
 logger = logging.getLogger(__name__)
+
+# grep 결과에 파일 경로를 함께 실어보낼 때 쓰는 구분자.
+# Windows 경로는 'D:\...' 처럼 콜론을 포함하므로 ':' 로는 자를 수 없고,
+# 로그 본문에도 나타나지 않을 조합이어야 한다.
+GREP_FILE_SEP = '|#|'
+
+
+class ArsReadError(Exception):
+    """원격 읽기가 EOF 전에 끊겼다.
+
+    '읽은 데이터는 유효하지만 끝까지 가지 못했다'는 뜻이다. 이걸 조용히
+    무시하면 색인기가 부분만 읽고도 파일을 확정(sealed)해 버려서, 그 파일의
+    나머지 구간이 영영 색인되지 않는다.
+    """
 
 
 # ── SSH/PowerShell 원시연산 ────────────────────────────────
@@ -49,8 +65,15 @@ class ArsSshIO:
     (runner(cmd_list) -> (returncode, stdout_bytes, stderr_text)).
     """
 
-    def __init__(self, connect_timeout=10, runner=None):
+    # 한 번의 SSH 왕복으로 읽어올 최대 바이트.
+    # 남은 구간을 통째로 요청하면 base64(≈4/3배) 문자열이 SSH stdout 으로
+    # 쏟아져 타임아웃이 나고, 그때부터 offset 이 영영 전진하지 못한다.
+    READ_CHUNK = 8 * 1024 * 1024
+
+    def __init__(self, connect_timeout=10, runner=None, timeout=120, read_timeout=300):
         self.connect_timeout = connect_timeout
+        self.timeout = timeout
+        self.read_timeout = read_timeout
         self._runner = runner or self._default_runner
 
     # SSH 타깃 문자열 (hostname 우선, 없으면 user@ip)
@@ -72,8 +95,17 @@ class ArsSshIO:
                '-o', 'StrictHostKeyChecking=accept-new',
                '-o', 'BatchMode=yes']
         key_path = server.get('ssh_key_path')
-        if key_path and Path(key_path).exists():
-            cmd += ['-i', str(key_path)]
+        if key_path:
+            if Path(key_path).exists():
+                # 설정에 키가 있으면 그 키만 쓰도록 고정 — 에이전트/기본 키가
+                # 먼저 시도돼 서버의 인증 시도 횟수를 소진하는 것을 막는다.
+                cmd += ['-i', str(key_path), '-o', 'IdentitiesOnly=yes']
+            else:
+                # 예전엔 조용히 -i 를 빼고 진행해 'Permission denied'(rc=255)만
+                # 남았다. 키 파일이 사라졌는지/서비스 계정에서 안 보이는지를
+                # 로그로 드러낸다.
+                logger.warning("SSH 키 파일 없음 — 키 인증 불가: %s "
+                               "(서비스 계정에서 접근 가능한 경로인지 확인)", key_path)
         port = server.get('ssh_port', 22)
         if port and int(port) != 22:
             cmd += ['-p', str(port)]
@@ -84,36 +116,65 @@ class ArsSshIO:
         """PowerShell 스크립트 → -EncodedCommand 용 UTF-16LE base64."""
         return base64.b64encode(script.encode('utf-16-le')).decode('ascii')
 
-    def _default_runner(self, cmd):
+    def _default_runner(self, cmd, timeout=None):
         try:
             p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               stdin=subprocess.DEVNULL, timeout=120)
+                               stdin=subprocess.DEVNULL, timeout=timeout or self.timeout)
             return p.returncode, p.stdout, (p.stderr or b'').decode('utf-8', 'ignore')
         except FileNotFoundError:
             return 127, b'', 'OpenSSH 미설치'
         except subprocess.TimeoutExpired:
-            return 124, b'', 'SSH 타임아웃'
+            return 124, b'', f'SSH 타임아웃({timeout or self.timeout}초)'
 
-    def _run_ps(self, server, script):
+    def _run_ps(self, server, script, timeout=None):
         """서버에서 PowerShell 스크립트 실행 → (rc, stdout_bytes, stderr)."""
         target = self.ssh_target(server)
         if not target:
             return 1, b'', 'SSH 대상 없음(hostname/ip 확인)'
+        # 출력 인코딩을 UTF-8 로 고정하지 않으면 콘솔 기본 코드페이지(한국어 Windows
+        # = CP949)로 나와, 파이썬이 UTF-8 로 디코드할 때 한글이 깨지거나 사라진다.
+        # (base64 로 받는 read_range 는 무관하지만 grep 결과는 원문 텍스트다)
+        script = ("[Console]::OutputEncoding=New-Object Text.UTF8Encoding $false;"
+                  + script)
         remote = f'powershell -NoProfile -NonInteractive -EncodedCommand {self._encode_ps(script)}'
         cmd = self._ssh_base(server) + [target, remote]
-        return self._runner(cmd)
+        try:
+            return self._runner(cmd, timeout)
+        except TypeError:
+            return self._runner(cmd)   # timeout 인자를 받지 않는 주입 runner 호환
 
     # ── 원시연산 ───────────────────────────────────────────
-    def file_size(self, server, path):
-        """파일 크기(byte). 없거나 오류면 None."""
-        script = f"$ErrorActionPreference='Stop'; (Get-Item -LiteralPath '{path}').Length"
+    def stat(self, server, path):
+        """
+        (size, status) 반환. status: 'ok' | 'nofile' | 'error'
+
+        '파일 없음'과 '접속/실행 실패'를 반드시 구분해야 한다. 둘을 같이 None 으로
+        뭉개면 인증이 끊긴 동안 멀쩡한 파일이 '없는 파일'로 확정(sealed)되어
+        인증을 복구해도 영영 색인되지 않는다.
+        """
+        script = ("$ErrorActionPreference='SilentlyContinue';"
+                  f"if(Test-Path -LiteralPath '{path}')"
+                  f"{{(Get-Item -LiteralPath '{path}').Length}}else{{'NOFILE'}}")
         rc, out, err = self._run_ps(server, script)
         if rc != 0:
-            return None
-        try:
-            return int(out.decode('ascii', 'ignore').strip())
-        except (ValueError, TypeError):
-            return None
+            logger.warning("파일 확인 실패(접속/실행 오류) %s: rc=%s %s",
+                           path, rc, (err or '').strip()[:160])
+            return None, 'error'
+        # 접속 배너/경고가 stdout 에 섞여 들어오는 서버가 있다. 통째로 비교하면
+        # 멀쩡한 응답이 'error' 로 뭉개지므로 마지막 유효 줄만 본다.
+        lines = [l.strip() for l in out.decode('ascii', 'ignore').splitlines() if l.strip()]
+        txt = lines[-1] if lines else ''
+        if txt == 'NOFILE':
+            return None, 'nofile'
+        if txt.isdigit():
+            return int(txt), 'ok'
+        logger.warning("파일 크기 응답 해석 실패 %s: %r", path, txt[:120])
+        return None, 'error'
+
+    def file_size(self, server, path):
+        """파일 크기(byte). 없거나 오류면 None. (구분이 필요하면 stat() 사용)"""
+        size, _status = self.stat(server, path)
+        return size
 
     def read_range(self, server, path, offset, length):
         """[offset, offset+length) 바이트를 읽어 bytes 반환. 없거나 오류면 None.
@@ -123,24 +184,62 @@ class ArsSshIO:
         """
         if length is None or length <= 0:
             return b''
+        # Stream.Read 는 요청한 만큼을 다 주지 않아도 되는 API다(짧게 돌려줄 수
+        # 있다). 한 번만 부르면 8MB 청크가 조각나서 돌아오고, 호출측은 그걸
+        # '파일이 줄었다/읽기가 끊겼다'로 오해한다. EOF 이거나 다 채울 때까지 돈다.
         script = (
             "$ErrorActionPreference='Stop';"
             f"$f=[IO.File]::Open('{path}',[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite);"
             "try{"
             f"[void]$f.Seek([long]{int(offset or 0)},[IO.SeekOrigin]::Begin);"
             f"$b=New-Object byte[] {int(length)};"
-            "$n=$f.Read($b,0,$b.Length);"
-            "[Convert]::ToBase64String($b,0,$n)"
+            "$t=0;"
+            "while($t -lt $b.Length){"
+            "$r=$f.Read($b,$t,$b.Length-$t);"
+            "if($r -le 0){break};"
+            "$t+=$r"
+            "};"
+            "[Convert]::ToBase64String($b,0,$t)"
             "}finally{$f.Close()}"
         )
-        rc, out, err = self._run_ps(server, script)
+        rc, out, err = self._run_ps(server, script, timeout=self.read_timeout)
         if rc != 0:
-            logger.debug(f"read_range 실패 {path}: {err[:150]}")
+            # 조용히 넘기면 offset 이 멈춘 채로 방치돼 원인 파악이 안 된다.
+            logger.warning("read_range 실패 %s [offset=%s len=%s]: %s",
+                           path, offset, length, (err or '').strip()[:200])
             return None
         try:
             return base64.b64decode(out.decode('ascii', 'ignore').strip() or '')
-        except Exception:
+        except Exception as e:
+            logger.warning("read_range 디코드 실패 %s: %s", path, e)
             return None
+
+    def read_chunks(self, server, path, offset, end):
+        """
+        [offset, end) 를 READ_CHUNK 단위로 나눠 순차 반환 (제너레이터).
+
+        남은 구간을 한 번에 요청하면 대용량 시간대에서 타임아웃이 나고,
+        그 뒤로는 매 폴링마다 같은(더 커진) 구간을 재시도하다 실패해
+        해당 파일의 색인이 영구히 멈춘다. 청크로 끊어 진행분을 확정한다.
+
+        end 까지 가지 못하면 ArsReadError 를 올린다. 여기서 조용히 return 하면
+        호출측은 '정상적으로 EOF 까지 읽었다'고 오해하고 파일을 확정해 버린다.
+        (실제로 그렇게 부분만 읽고 sealed=1 이 된 파일들이 생겼다)
+        """
+        pos = int(offset or 0)
+        end = int(end or 0)
+        while pos < end:
+            want = min(self.READ_CHUNK, end - pos)
+            data = self.read_range(server, path, pos, want)
+            if data is None:
+                raise ArsReadError(f'읽기 실패 offset={pos} len={want}')
+            if not data:
+                raise ArsReadError(f'응답 0바이트 offset={pos} (EOF 이전)')
+            yield pos, data
+            pos += len(data)
+            if len(data) < want:
+                # 파일이 그 사이 줄었거나 읽기가 잘렸다 — 어느 쪽이든 end 미도달
+                raise ArsReadError(f'짧게 읽힘 offset={pos} ({len(data)}/{want})')
 
     def read_all(self, server, path):
         """파일 전체 bytes (없으면 None). 대용량엔 grep 을 우선 사용할 것."""
@@ -156,39 +255,103 @@ class ArsSshIO:
         rc, out, err = self._run_ps(server, script)
         return rc == 0 and out.decode('ascii', 'ignore').strip() == '1'
 
-    def grep(self, server, paths, pattern, regex=True, encoding='utf8'):
+    # -EncodedCommand 는 Windows 명령행 길이 제한(약 32,767자)에 걸린다.
+    # base64(UTF-16LE)는 원문의 약 2.7배로 부풀므로 스크립트를 이 길이 이하로 유지한다.
+    # (경로 2개 × 7일 = 후보 336개면 인코딩 후 37KB 로 한도를 넘어 명령 자체가 실패했다)
+    MAX_SCRIPT = 8000
+
+    # 파일 인코딩 후보 — ARS 로그는 UTF-8 과 CP949(=default)가 섞여 있다.
+    # utf8 로만 읽으면 CP949 파일에서 한글 패턴이 전혀 매칭되지 않는다.
+    GREP_ENCODINGS = ('utf8', 'default')
+
+    def _grep_script(self, paths, pat, regex, encoding, with_filename=False):
+        # 주의: f-string 안의 PowerShell 중괄호는 {{ }} 로 이스케이프해야 하지만,
+        #       PowerShell 에 전달될 때는 { } 하나로 나가야 한다.
+        arr = ','.join("'" + p.replace("'", "''") + "'" for p in paths)
+        simple = '' if regex else '-SimpleMatch '
+        # 파일명을 함께 내보낼 때는 Windows 경로에 ':' 가 들어있어(D:\...) 콜론으로
+        # 자를 수 없다. 로그 본문에 나올 일이 없는 구분자를 쓴다.
+        emit = (f"$_.Path + '{GREP_FILE_SEP}' + $_.Line" if with_filename else "$_.Line")
+        return (
+            "$ErrorActionPreference='SilentlyContinue';"
+            f"$ps=@({arr}) | Where-Object {{ Test-Path -LiteralPath $_ }};"
+            "if($ps){"
+            f"Select-String -LiteralPath $ps -Encoding {encoding} {simple}-Pattern '{pat}'"
+            # 포매터를 거치면 콘솔 폭에서 줄이 접히거나 잘린다 → 직접 stdout 출력
+            f" | ForEach-Object {{ [Console]::Out.WriteLine({emit}) }}"
+            "}"
+        )
+
+    def _grep_batches(self, paths, pat, regex, encoding, with_filename=False):
+        """스크립트 길이 한도에 맞춰 경로를 나눈다."""
+        batches, cur = [], []
+        for p in paths:
+            cur.append(p)
+            if len(self._grep_script(cur, pat, regex, encoding, with_filename)) > self.MAX_SCRIPT:
+                if len(cur) == 1:          # 경로 하나만으로 한도 초과 — 그대로 시도
+                    batches.append(cur)
+                    cur = []
+                else:
+                    batches.append(cur[:-1])
+                    cur = [p]
+        if cur:
+            batches.append(cur)
+        return batches
+
+    @staticmethod
+    def _encodings_for(pattern, encoding):
+        """시도할 파일 인코딩 목록.
+
+        패턴이 ASCII 뿐이면 CP949 파일에서도 utf8 로 읽은 바이트가 그대로
+        매칭된다. 그런데도 무조건 두 번 돌면 '매칭 없음' 검색이 항상 2배로
+        걸린다(패턴 검색이 유난히 느리던 큰 이유). 한글이 들어간 패턴만
+        두 번째 인코딩을 시도한다.
+        """
+        if encoding:
+            return (encoding,)
+        try:
+            pattern.encode('ascii')
+            return ('utf8',)
+        except UnicodeEncodeError:
+            return ArsSshIO.GREP_ENCODINGS
+
+    def grep(self, server, paths, pattern, regex=True, encoding=None,
+             with_filename=False, timeout=None):
         """서버측 Select-String 으로 매칭 라인만 회수.
 
         Args:
             paths: 로컬 경로 리스트 (존재하지 않는 경로는 무시됨)
             regex: True=.NET 정규식, False=리터럴(SimpleMatch)
-            encoding: 'utf8' | 'default'(CP949 등 시스템 기본) | 'unicode' ...
+            encoding: 파일 인코딩 지정. None 이면 utf8 → default(CP949) 순으로 시도
+            with_filename: True 이면 각 줄이 '경로<GREP_FILE_SEP>본문' 으로 온다
         Returns:
             (lines: list[str], error: str|None)
         """
         if not paths:
             return [], None
-        # 경로 배열 리터럴 구성 (작은따옴표 이스케이프)
-        arr = ','.join("'" + p.replace("'", "''") + "'" for p in paths)
         pat = pattern.replace("'", "''")
-        simple = '' if regex else '-SimpleMatch '
-        # 존재하는 경로만 필터 → Select-String (여러 파일 한 번에)
-        # 주의: 이 문자열은 f-string 이 아니므로 중괄호를 이스케이프하지 말 것
-        #       ('{{ }}' 로 쓰면 PowerShell 에 그대로 전달돼 스크립트블록 오류 → 출력 0줄)
-        script = (
-            "$ErrorActionPreference='SilentlyContinue';"
-            f"$ps=@({arr}) | Where-Object {{ Test-Path -LiteralPath $_ }};"
-            "if($ps){"
-            f"Select-String -LiteralPath $ps -Encoding {encoding} {simple}-Pattern '{pat}'"
-            " | ForEach-Object { $_.Line }"
-            "}"
-        )
-        rc, out, err = self._run_ps(server, script)
-        if rc != 0 and err:
-            return [], err[:200]
-        text = out.decode('utf-8', 'ignore')
-        lines = [l.rstrip('\r\n') for l in text.splitlines() if l.strip()]
-        return lines, None
+        encs = self._encodings_for(pattern, encoding)
+        last_err = None
+
+        for enc in encs:
+            lines = []
+            for batch in self._grep_batches(paths, pat, regex, enc, with_filename):
+                rc, out, err = self._run_ps(
+                    server, self._grep_script(batch, pat, regex, enc, with_filename),
+                    timeout=timeout)
+                if rc != 0:
+                    last_err = (err or '').strip()[:200] or f'PowerShell rc={rc}'
+                    logger.warning("ARS grep 실패 (%s, 경로 %d개): %s",
+                                   enc, len(batch), last_err)
+                    continue
+                text = out.decode('utf-8', 'ignore')
+                lines += [l.rstrip('\r\n') for l in text.splitlines() if l.strip()]
+            if lines:
+                if enc != encs[0]:
+                    logger.info("ARS grep: %s 인코딩으로 매칭 (%d줄)", enc, len(lines))
+                return lines, None
+
+        return [], last_err
 
 
 # ── SSH 기반 ARS 페처 (UNC 페처와 동일 인터페이스) ──────────
@@ -214,9 +377,11 @@ class ArsSshLogFetcher(ArsLogFetcher):
         return {get_server_label(s): s for _, s in self._ars_ssh_servers()}
 
     # ── 패턴 검색 (서버측 Select-String) ───────────────────
-    def search_by_pattern(self, pattern):
+    def search_by_pattern(self, pattern, deadline=None):
+        """deadline: time.monotonic() 기준 마감 시각. 넘기면 남은 서버를 건너뛰고
+        partial=True 로 돌려준다 (전부 끝날 때까지 기다리다 브라우저가 멎는 것 방지)."""
+        import time as _time
         try:
-            import re
             re.compile(pattern)
         except re.error as e:
             return {'success': False, 'message': f'잘못된 정규식: {str(e)}', 'results': []}
@@ -228,21 +393,55 @@ class ArsSshLogFetcher(ArsLogFetcher):
 
         dates = self._date_range()
         results = []
-        for _, server in servers:
+        partial = False
+        skipped = []
+
+        # 서버마다 별개의 SSH 접속이라 서로 기다릴 이유가 없다. 순차로 돌면
+        # 서버 수만큼 시간이 곱해진다(서버마다 대용량 로그를 훑으므로).
+        def one(server):
             label = get_server_label(server)
             paths = get_log_paths(server)          # SSH 모드: 로컬 경로들
             if not paths:
-                continue
-            # 날짜/시(HH) 전개 → 로컬 경로 후보
+                return label, [], None, False
+            remain = None
+            if deadline is not None:
+                remain = deadline - _time.monotonic()
+                if remain <= 1:
+                    return label, [], None, True   # 시간 초과로 건너뜀
             candidates = [p for _, p in self._candidate_files(paths, dates)]
-            lines, err = self.io.grep(server, candidates, pattern, regex=True)
-            if err:
-                self.errors.append({'server': label, 'error': 'SSH 검색 오류', 'details': err})
+            # with_filename=True: 서버 1대가 시(HH)별로 여러 파일을 보므로
+            # 어느 파일에서 나온 줄인지 결과에 같이 실어보낸다.
+            lines, err = self.io.grep(server, candidates, pattern, regex=True,
+                                      with_filename=True,
+                                      timeout=int(remain) if remain else None)
+            out = []
             for line in lines:
-                results.append({'line': line.strip(), 'server': label,
-                                'type': 'ARS', 'file': '', 'timestamp': _time_of_safe(line)})
+                path, body = ('', line)
+                if GREP_FILE_SEP in line:
+                    path, body = line.split(GREP_FILE_SEP, 1)
+                out.append({'line': body.strip(), 'server': label, 'type': 'ARS',
+                            'file': os.path.basename(path.replace(chr(92), '/')) if path else '',
+                            'file_path': path,
+                            'timestamp': _time_of_safe(body)})
+            return label, out, err, False
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max(1, min(len(servers), 8))) as ex:
+            for label, out, err, skip in ex.map(lambda t: one(t[1]), servers):
+                if skip:
+                    partial = True
+                    skipped.append(label)
+                    continue
+                if err:
+                    self.errors.append({'server': label, 'error': 'SSH 검색 오류',
+                                        'details': err})
+                results.extend(out)
+        if skipped:
+            self.errors.append({'error': '시간 초과로 건너뜀',
+                                'details': f"ARS(SSH) {', '.join(skipped)}"})
         return {'success': True, 'pattern': pattern, 'result_count': len(results),
-                'results': results, 'errors': self.errors or None}
+                'results': results, 'partial': partial,
+                'errors': self.errors or None}
 
     # ── 인바운드 검색 (인덱스 + 오프셋 SSH 읽기) ────────────
     def search_inbound(self, phone=None, cust_id=None):
@@ -257,7 +456,13 @@ class ArsSshLogFetcher(ArsLogFetcher):
 
         servers = self._ars_ssh_servers()
         label_map = {get_server_label(s): s for _, s in servers}
-        labels = list(label_map.keys()) or None
+        if not label_map:
+            # 선택 조건에 맞는 SSH ARS 서버가 없으면 결과도 없어야 한다.
+            # (UNC 쪽과 동일 — labels=None 은 '서버 필터 없음'이 되어 선택하지 않은
+            #  서버의 콜까지 돌려준다)
+            return {'success': True, 'search_key': needle, 'call_count': 0,
+                    'calls': [], 'errors': self.errors or None}
+        labels = list(label_map.keys())
 
         rows = store.search(phone=phone, cust_id=cust_id,
                             start_date=self.start_date, end_date=self.end_date,
@@ -271,8 +476,7 @@ class ArsSshLogFetcher(ArsLogFetcher):
             server = label_map.get(r.get('server'))
             if not server:
                 continue
-            lines = self._read_call_lines_ssh(
-                server, r['file_path'], r['start_offset'], r['end_offset'], r['channel'])
+            lines = self._read_call_lines_ssh(server, r)
             st = (r.get('start_time') or '')
             et = (r.get('end_time') or '')
             calls.append({
@@ -289,18 +493,54 @@ class ArsSshLogFetcher(ArsLogFetcher):
         return {'success': True, 'search_key': needle, 'call_count': len(calls),
                 'calls': calls, 'errors': self.errors or None}
 
-    def _read_call_lines_ssh(self, server, path, start_offset, end_offset, channel):
-        """SSH 오프셋 읽기로 콜 구간만 회수 → 해당 채널 라인만."""
-        length = (end_offset or 0) - (start_offset or 0)
-        blob = self.io.read_range(server, path, start_offset or 0, length)
-        if not blob:
-            if blob is None:
-                self.errors.append({'error': 'ARS(SSH) 원본 읽기 오류',
-                                    'details': f'{path} (원본 정리 가능성)'})
-            return []
-        enc = self._detect_encoding_bytes(blob)
-        text = blob.decode(enc, errors='replace')
-        return [l for l in text.splitlines(keepends=True) if _channel_of(l) == channel]
+    def _read_call_lines_ssh(self, server, row):
+        """SSH 오프셋 읽기로 콜 구간만 회수 → 해당 채널 라인만.
+
+        오프셋 읽기가 실패하면(원본 교체·로테이션·권한 등) 목록만 뜨고 본문이
+        비어 버린다. 그때는 사유를 남기고 UCID 로 직접 검색해 복구를 시도한다.
+        """
+        path = row.get('file_path') or ''
+        start_offset = row.get('start_offset') or 0
+        end_offset = row.get('end_offset') or 0
+        channel = row.get('channel')
+        ucid = row.get('ucid') or ''
+        length = end_offset - start_offset
+
+        blob = self.io.read_range(server, path, start_offset, length) if length > 0 else b''
+        if blob:
+            enc = self._detect_encoding_bytes(blob)
+            lines = [l for l in blob.decode(enc, errors='replace').splitlines(keepends=True)
+                     if _channel_of(l) == channel]
+            if lines:
+                return lines
+
+        # ── 여기부터 복구 경로 ──
+        size, status = self.io.stat(server, path)
+        if status == 'error':
+            reason = '원본 서버 접속/권한 오류'
+        elif status == 'nofile':
+            reason = '원본 파일이 없음(보관주기 경과 또는 이동)'
+        elif size is not None and size < end_offset:
+            reason = f'원본이 교체·축소됨 (현재 {size:,}바이트 < 색인 위치 {end_offset:,})'
+        elif blob:
+            reason = f'구간은 읽혔으나 채널 {channel} 라인이 없음'
+        else:
+            reason = '구간 읽기 실패'
+
+        recovered = []
+        if ucid and status == 'ok':
+            # 오프셋이 틀어졌어도 UCID 로는 찾을 수 있다 (콜 전체는 아니지만
+            # 빈 화면보다는 낫다)
+            found, _err = self.io.grep(server, [path], re.escape(ucid), regex=True)
+            recovered = [l + '\n' for l in found]
+
+        self.errors.append({
+            'server': row.get('server'),
+            'error': 'ARS(SSH) 원본 읽기 실패',
+            'details': f'{os.path.basename(path)} — {reason}'
+                       + (f' · UCID 검색으로 {len(recovered)}줄 복구' if recovered else ''),
+        })
+        return recovered
 
 
 # ── 부모의 UNC 연결관리자 자리채움 (SSH 모드는 연결관리 불필요) ──
@@ -316,9 +556,12 @@ class _NoopConn:
 
 
 def _time_of_safe(line):
-    """라인에서 HH:MM:SS 추출 (실패 시 '')."""
-    import re
-    m = re.search(r'\b(\d{2}:\d{2}:\d{2})\b', line or '')
+    """라인에서 표시용 'YYYY-MM-DD HH:MM:SS' 추출 (날짜 접두부 없으면 HH:MM:SS, 실패 시 '')."""
+    s = line or ''
+    m = re.search(r'\b(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\b', s)
+    if m:
+        return f'{m.group(1)} {m.group(2)}'
+    m = re.search(r'\b(\d{2}:\d{2}:\d{2})\b', s)
     return m.group(1) if m else ''
 
 

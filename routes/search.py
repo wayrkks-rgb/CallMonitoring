@@ -12,12 +12,18 @@
 from flask import Blueprint, request, jsonify
 import logging
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime, timedelta
+
+# 패턴 검색 기본 제한 시간(초). 넘으면 남은 서버를 건너뛰고 부분 결과를 준다.
+PATTERN_BUDGET_SEC = 90
 
 from log_searcher import LogSearcher
 from ars_fetcher import ArsLogFetcher
 from ars_ssh_fetcher import ArsSshLogFetcher
-from config_manager import validate_date_format
+from config_manager import validate_date_format, load_config, get_enabled_servers
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +134,25 @@ def _parse_common(data):
         if not isinstance(server_ids, list) or len(server_ids) == 0:
             return None, {'success': False, 'message': '검색할 서버를 선택하세요'}
         server_ids = [int(sid) for sid in server_ids]
+
+    # 설정을 못 읽으면 get_enabled_servers() 가 빈 리스트를 돌려주고, 검색기는
+    # '대상 서버 0대'로 조용히 빈 결과를 낸다. 화면엔 '결과 없음'만 떠서
+    # 로그가 없는 건지 설정이 깨진 건지 구분할 수 없다 — 여기서 잘라낸다.
+    if not load_config():
+        return None, {
+            'success': False,
+            'message': 'config.json 을 읽지 못해 검색 대상 서버가 없습니다. '
+                       '설정 파일이 손상됐을 수 있습니다 — '
+                       'python diag_servers.py 로 확인하세요',
+        }
+
+    # 선택 조건에 맞는 활성 서버가 하나도 없으면 그것도 '결과 없음'과 구분한다.
+    if not get_enabled_servers(server_ids=server_ids):
+        return None, {
+            'success': False,
+            'message': '선택한 조건에 해당하는 활성 서버가 없습니다 '
+                       '(서버 관리에서 사용 여부와 로그 경로를 확인하세요)',
+        }
 
     return {
         'start_date': start_date or None,
@@ -333,47 +358,78 @@ def pattern_search():
         except re.error as e:
             return jsonify({'success': False, 'message': f'잘못된 정규식: {str(e)}'})
 
-        results = []
-        errors = []
+        # 검색 제한 시간. 예전에는 세 엔진을 순서대로 돌려서, 서버가 많으면
+        # 몇 분씩 걸리고 그동안 화면은 멈춘 것처럼 보였다.
+        #  · 세 엔진을 동시에 돌린다(각각 다른 서버군이라 서로 방해하지 않는다)
+        #  · 마감이 지나면 남은 서버를 건너뛰고 '지금까지 찾은 것'을 돌려준다
+        try:
+            budget = int(data.get('budget_sec') or PATTERN_BUDGET_SEC)
+        except (TypeError, ValueError):
+            budget = PATTERN_BUDGET_SEC
+        budget = max(10, min(budget, 600))
+        t0 = time.monotonic()
+        deadline = t0 + budget
 
-        # 1) AICC — 서버측 grep (purpose=None → inbound+outbound 전체)
-        aicc = LogSearcher(
-            start_date=params['start_date'],
-            end_date=params['end_date'],
-            server_ids=params['server_ids'],
-            purpose=None,
-        )
-        aicc_res = aicc.search_by_pattern(pattern)
-        results.extend(aicc_res.get('results') or [])
-        errors.extend(aicc_res.get('errors') or [])
+        common = dict(start_date=params['start_date'], end_date=params['end_date'],
+                      server_ids=params['server_ids'])
 
-        # 2) ARS(UNC) — UNC 파일 매칭
-        ars = ArsLogFetcher(
-            start_date=params['start_date'],
-            end_date=params['end_date'],
-            server_ids=params['server_ids'],
-        )
-        ars_res = ars.search_by_pattern(pattern)
-        results.extend(ars_res.get('results') or [])
-        errors.extend(ars_res.get('errors') or [])
+        def run_aicc():
+            return LogSearcher(purpose=None, **common).search_by_pattern(
+                pattern, deadline=deadline)
 
-        # 3) ARS(SSH) — 서버측 Select-String
-        ars_ssh = ArsSshLogFetcher(
-            start_date=params['start_date'],
-            end_date=params['end_date'],
-            server_ids=params['server_ids'],
-        )
-        ars_ssh_res = ars_ssh.search_by_pattern(pattern)
-        results.extend(ars_ssh_res.get('results') or [])
-        errors.extend(ars_ssh_res.get('errors') or [])
+        def run_ars_unc():
+            return ArsLogFetcher(**common).search_by_pattern(pattern, deadline=deadline)
 
-        return jsonify({
+        def run_ars_ssh():
+            return ArsSshLogFetcher(**common).search_by_pattern(pattern, deadline=deadline)
+
+        results, errors, partial = [], [], False
+        ex = ThreadPoolExecutor(max_workers=3)
+        try:
+            futures = {ex.submit(fn): name for fn, name in
+                       ((run_aicc, 'AICC'), (run_ars_unc, 'ARS(UNC)'),
+                        (run_ars_ssh, 'ARS(SSH)'))}
+            # 엔진이 예산을 넘겨도 응답은 돌려준다. 안 그러면 브라우저가
+            # 하염없이 기다리게 되고, 그게 '검색이 멈췄다'로 보인다.
+            try:
+                for fut in as_completed(futures, timeout=budget + 5):
+                    name = futures[fut]
+                    try:
+                        res = fut.result()
+                    except Exception as e:
+                        logger.exception(f"{name} 패턴 검색 오류")
+                        errors.append({'error': f'{name} 검색 오류', 'details': str(e)})
+                        continue
+                    results.extend(res.get('results') or [])
+                    errors.extend(res.get('errors') or [])
+                    partial = partial or bool(res.get('partial'))
+            except FuturesTimeout:
+                partial = True
+                late = [n for f, n in futures.items() if not f.done()]
+                errors.append({'error': '시간 초과', 'details': f"응답 없음: {', '.join(late)}"})
+                logger.warning("패턴 검색 예산 초과 — 미완료 엔진: %s", late)
+        finally:
+            # 남은 작업이 끝나기를 기다리지 않는다(응답을 막지 않도록)
+            ex.shutdown(wait=False)
+
+        elapsed = round(time.monotonic() - t0, 1)
+        out = {
             'success': True,
             'pattern': pattern,
             'result_count': len(results),
             'results': results,
+            'elapsed': elapsed,
+            'partial': partial,
             'errors': errors or None,
-        })
+        }
+        if partial:
+            out['hint'] = (
+                f'{budget}초 안에 전부 확인하지 못해 일부 서버를 건너뛰었습니다. '
+                f'아래 결과는 전체가 아닙니다.\n'
+                f'· 검색어를 더 구체적으로 좁혀 보세요\n'
+                f'· 날짜 범위를 하루로 줄여 보세요\n'
+                f'· 서버를 나눠서 검색해 보세요')
+        return jsonify(out)
 
     except Exception as e:
         logger.exception(f"패턴 검색 오류: {e}")
