@@ -255,53 +255,49 @@ PHASES = ["변경 대상 확인", "시나리오 수정", "배포 전 검증",
 ASIS_LABEL, ASIS_SUB = "개선 전", "AS-IS"
 TOBE_LABEL, TOBE_SUB = "개선 후", "TO-BE"
 
-#  개선 전 : 반영까지 실제로 밟는 절차와 그때 생기는 문제
-ASIS = [
-    {"title": "대상 시나리오 판단",
-     "lines": ["SR 내용으로 대상 선정", "연관 범위는 경험으로 짐작",
-               "영향 목록은 별도 기록 없음"],
-     "issue": "영향 범위 확인 수단 없음"},
-    {"title": "디자이너로 수정",
-     "lines": ["XML 블록 · 함수 수정", "여러 SR 이 같은 파일에 몰림",
-               "수정분 구분은 담당자 기억"],
-     "issue": "수정 이력이 남지 않음"},
-    {"title": "운영본과 전수 대조",
-     "lines": ["운영본 · 수정본을 열어 비교", "함수 · 변수를 하나씩 확인",
-               "연관 시나리오는 따로 확인"],
-     "issue": "확인 범위가 사람마다 다름"},
-    {"title": "운영 반영",
-     "lines": ["수정본을 운영에 적용", "실제 통화로 결과 확인",
-               "이상 발견 시 수정 후 재배포"],
-     "issue": "누락 · 혼재를 반영 후 발견"},
-    {"title": "장애 · 문의 대응",
-     "lines": ["고객 정보로 전체 로그 조회", "처음부터 읽어 지점 판단",
-               "업무 단계는 블록 번호로 유추"],
-     "issue": "원인 확인까지 장시간 소요"},
-]
-
-#  재배포 되돌이 — 개선 전 절차의 핵심 문제
-ASIS_LOOP = {"from": 3, "to": 1,
-             "text": "오류 발견 시 수정 후 재배포 — 적용 전 SR 20건 중 5건"}
-
-#  개선 후 : 같은 단계에서 '무엇이 바뀌었는지'만
-#    before 는 지워지는 방식(줄이 그어진다), after 는 새로 하는 방식
-TOBE = [
-    {"tag": "신규", "before": "경험으로 영향 범위 짐작",
-     "after": ["업무 구조 화면에서", "영향 범위 확인"],
+#  단계별 개선 전 · 후 비교표
+#    before : 개선 전에 실제로 하는 일 / issue : 그래서 생기는 문제
+#    after  : 개선 후 방식 / gain : 그 결과
+ROWS = [
+    {"no": "1", "step": "변경 대상 확인",
+     "before": ["SR 내용으로 수정 대상 선정",
+                "연관 범위는 담당자 경험으로 짐작"],
+     "issue": "영향 범위를 확인할 수단 없음",
+     "after": ["업무 구조 E2E 화면에서",
+               "대상과 연관 시나리오를 함께 확인"],
      "gain": "누락 위험 감소"},
-    {"tag": "유지", "before": "",
-     "after": ["수정 방식은 기존과 동일", "저장 시 비교 대상 등록"],
+    {"no": "2", "step": "시나리오 수정",
+     "before": ["시나리오 XML 블록 · 함수 수정",
+                "여러 SR 이 같은 파일에 몰림"],
+     "issue": "수정 이력이 파일에 남지 않음",
+     "after": ["수정 방식은 기존과 동일",
+               "저장 시 비교 대상으로 자동 등록"],
      "gain": "도구 교체 없음"},
-    {"tag": "자동화", "before": "함수 · 변수 전수 육안 대조",
-     "after": ["변경분만 자동 추출 · 비교"],
+    {"no": "3", "step": "배포 전 검증",
+     "before": ["운영본과 수정본을 각각 열어 비교",
+                "블록 내 함수 · 변수를 하나씩 대조"],
+     "issue": "확인 범위가 사람마다 달라짐",
+     "after": ["전체 자동 비교로 변경된 블록 · 함수 · 변수만 추출",
+               "연관 시나리오까지 한 화면에 표시"],
      "gain": "60분 → 10분"},
-    {"tag": "차단", "before": "반영 후 통화로 확인",
-     "after": ["배포 전 혼재 · 누락 식별"],
+    {"no": "4", "step": "운영 반영",
+     "before": ["수정본 적용 후 실제 통화로 확인",
+                "*오류 발견 시 수정 후 재배포"],
+     "issue": "누락 · 혼재를 반영 후에 발견",
+     "after": ["변경 내용과 영향 범위 확인 후 반영",
+               "SR 간 중복 변경 · 누락분을 배포 전 식별"],
      "gain": "재배포 25% → 0%"},
-    {"tag": "선제 제시", "before": "전체 로그 직접 해석",
-     "after": ["중단 지점 · 사유 우선 제시"],
+    {"no": "5", "step": "장애 · 문의 대응",
+     "before": ["고객 정보로 전체 로그 조회",
+                "처음부터 읽어 중단 지점 판단"],
+     "issue": "원인 지점까지 도달에 장시간 소요",
+     "after": ["통화 흐름 요약과 중단 지점 · 사유를 먼저 제시",
+               "해당 구간 로그만 확인"],
      "gain": "30분 → 5분"},
 ]
+
+ASIS_LABEL, ASIS_SUB = "개선 전", "AS-IS"
+TOBE_LABEL, TOBE_SUB = "개선 후", "TO-BE"
 
 ASIS_RESULT = "변경 범위를 사람의 기억과 육안 대조로 확인 — 놓친 부분은 운영 반영 후에야 드러남"
 TOBE_RESULT = "영향 범위 · 변경분 · 혼재 여부를 배포 전에 화면으로 확인 — 장애는 지점을 먼저 제시"
@@ -964,11 +960,10 @@ def build_roadmap():
 
 
 def build_flow():
-    """개선 전 · 후 업무 흐름.
+    """개선 전 · 후 업무 흐름 — 단계를 세로로 세운 비교표.
 
-    위는 '반영까지 실제로 밟는 절차', 아래는 '그 절차에서 무엇이 바뀌었는지'.
-    아래를 위와 똑같은 절차로 한 번 더 그리면 비교가 흐려지므로, 아래는
-    지워지는 방식(줄 그음)과 새 방식만 보여 준다.
+    한 행을 왼쪽에서 오른쪽으로 읽으면 그 단계가 어떻게 바뀌었는지 끝난다.
+    같은 절차를 두 번 그리지 않으므로 비교가 흐려지지 않는다.
     """
     g = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
          f'viewBox="0 0 {W} {H}">',
@@ -982,126 +977,87 @@ def build_flow():
     g.append(T(W - M, 68, F_META, size=12.5, fill=N["teal"], anchor="end",
                ghost=N["ghost_navy"]))
 
-    cx0 = M + 92
-    tw = W - M - cx0
-    gap = 24
-    n = len(PHASES)
-    cw = (tw - gap * (n - 1)) / n
-    colx = lambda i: cx0 + i * (cw + gap)
-    colc = lambda i: colx(i) + cw / 2
+    # ── 표 뼈대 ──────────────────────────────────────────────────────
+    c0, c1 = 200, 560
+    x0 = M
+    x1, x2, x3 = x0 + c0, x0 + c0 + c1, W - M
+    c2 = x3 - x2
+    ty, hh, rh = 128, 46, 124
+    tbl_h = hh + rh * len(ROWS)
 
-    # ── 작업 절차 띠 ─────────────────────────────────────────────────
-    py, ph = 120, 36
-    g.append(R(M, py, W - 2 * M, ph, r=9, fill=N["navy"]))
-    g.append(TC(M + 46, py + ph / 2, "작업 절차", size=11.5, weight="700",
-                fill=N["teal"], spacing="1", ghost=N["ghost_navy"]))
-    for i, phs in enumerate(PHASES):
-        g.append(f'<circle cx="{colx(i) + 13}" cy="{py + ph / 2}" r="9" '
-                 f'fill="{N["teal"]}"/>')
-        g.append(TC(colx(i) + 13, py + ph / 2, str(i + 1), size=10.5,
-                    weight="700", fill=N["navy"], keep=True))
-        g.append(TC(colx(i) + 29, py + ph / 2, phs, size=13, weight="700",
-                    fill="#FFFFFF", anchor="start", ghost=N["ghost_navy"]))
-        if i < n - 1:
-            cxm = colx(i) + cw + gap / 2
-            g.append(f'<path d="M {cxm - 5},{py + ph / 2 - 5} '
-                     f'L {cxm + 2},{py + ph / 2} L {cxm - 5},{py + ph / 2 + 5}" '
-                     f'stroke="{N["on_navy_sub"]}" stroke-width="1.8" '
-                     f'fill="none" stroke-linecap="round"/>')
+    g.append(R(x0, ty, x3 - x0, tbl_h, r=12, fill=N["page"],
+               stroke=N["line"], sw=1))
+    # 열 바탕 — 개선 전은 회색, 개선 후는 청록으로 칠해 두 열을 색으로 가른다
+    g.append(f'<path d="M {x1},{ty + hh} h {c1} v {rh * len(ROWS)} h -{c1} z" '
+             f'fill="{N["soft"]}"/>')
+    g.append(f'<path d="M {x2},{ty + hh} h {c2 - 12} a 12,12 0 0 1 12,12 '
+             f'v {rh * len(ROWS) - 24} a 12,12 0 0 1 -12,12 h -{c2 - 12} z" '
+             f'fill="{N["teal_soft"]}" opacity="0.55"/>')
 
-    # ── 개선 전 : 절차 ───────────────────────────────────────────────
-    ay, abh = 196, 228
-    acc = N["amber"]
-    g.append(T(M, ay + 78, ASIS_LABEL, size=19, weight="700", fill=N["sub"]))
-    g.append(T(M, ay + 99, ASIS_SUB, size=11.5, weight="700", fill=N["mute"],
-               spacing="1"))
-    for i, st in enumerate(ASIS):
-        x = colx(i)
-        g.append(R(x, ay, cw, abh, r=11, fill=N["soft"], stroke=N["line"]))
-        g.append(R(x, ay, cw, 5, r=2.5, fill=acc))
-        g.append(f'<circle cx="{x + 24}" cy="{ay + 34}" r="12" fill="{acc}"/>')
-        g.append(TC(x + 24, ay + 34, str(i + 1), size=12, weight="700",
+    # 머리행
+    g.append(f'<path d="M {x0 + 12},{ty} h {x3 - x0 - 24} a 12,12 0 0 1 12,12 '
+             f'v {hh - 12} h -{x3 - x0} v -{hh - 12} a 12,12 0 0 1 12,-12 z" '
+             f'fill="{N["navy"]}"/>')
+    g.append(TC(x0 + 24, ty + hh / 2, "작업 절차", size=12.5, weight="700",
+                anchor="start", fill=N["teal"], spacing="1",
+                ghost=N["ghost_navy"]))
+    g.append(TC(x1 + 22, ty + hh / 2, ASIS_LABEL + "   " + ASIS_SUB, size=14,
+                weight="700", anchor="start", fill=N["on_navy_sub"],
+                ghost=N["ghost_navy"]))
+    g.append(TC(x2 + 22, ty + hh / 2, TOBE_LABEL + "   " + TOBE_SUB, size=14,
+                weight="700", anchor="start", fill=N["teal"],
+                ghost=N["ghost_navy"]))
+
+    for i, row in enumerate(ROWS):
+        ry = ty + hh + i * rh
+        if i:
+            g.append(f'<path d="M {x0},{ry} h {x3 - x0}" '
+                     f'stroke="{N["line"]}" stroke-width="1"/>')
+
+        # 단계
+        g.append(f'<circle cx="{x0 + 34}" cy="{ry + rh / 2}" r="16" '
+                 f'fill="{N["navy"]}"/>')
+        g.append(TC(x0 + 34, ry + rh / 2, row["no"], size=15, weight="700",
                     fill="#FFFFFF", keep=True))
-        g.append(T(x + 44, ay + 39, st["title"], size=15, weight="700",
-                   fill=N["ink"]))
-        g.append(f'<path d="M {x + 16},{ay + 56} L {x + cw - 16},{ay + 56}" '
-                 f'stroke="{N["line"]}" stroke-width="1"/>')
-        for j, ln in enumerate(st["lines"]):
-            g.append(f'<circle cx="{x + 22}" cy="{ay + 80 + j * 24 - 4}" '
-                     f'r="2.2" fill="{N["mute"]}"/>')
-            g.append(T(x + 32, ay + 80 + j * 24, ln, size=13, fill=N["sub"]))
-        iy = ay + abh - 58
-        g.append(R(x + 10, iy, cw - 20, 48, r=8, fill=N["amber_soft"],
-                   stroke=N["amber_line"]))
-        g.append(TC(x + 20, iy + 15, "문제", size=10.5, weight="700",
-                    anchor="start", fill=acc, spacing="1"))
-        g.append(TC(x + 20, iy + 33, st["issue"], size=12.5, weight="700",
+        g.append(TC(x0 + 60, ry + rh / 2, row["step"], size=15, weight="700",
                     anchor="start", fill=N["ink"]))
 
-    # ── 재배포 되돌이 ────────────────────────────────────────────────
-    ly = ay + abh + 8
-    fx, tx = colc(ASIS_LOOP["from"]), colc(ASIS_LOOP["to"])
-    g.append(f'<path d="M {fx},{ly} v 16 H {tx} v -16" fill="none" '
-             f'stroke="{acc}" stroke-width="2" stroke-dasharray="6 5"/>')
-    g.append(f'<path d="M {tx - 6},{ly + 8} L {tx},{ly - 2} L {tx + 6},{ly + 8} Z" '
-             f'fill="{acc}"/>')
-    lw = 26 + est_w(ASIS_LOOP["text"], 12.5)
-    g.append(R((fx + tx) / 2 - lw / 2, ly + 2, lw, 28, r=14,
-               fill=N["amber_soft"], stroke=N["amber_line"]))
-    g.append(TC((fx + tx) / 2, ly + 16, ASIS_LOOP["text"], size=12.5,
-                weight="700", fill=acc))
+        # 개선 전
+        for j, ln in enumerate(row["before"]):
+            hi = ln.startswith("*")       # 문제의 원인이 되는 줄은 강조
+            g.append(f'<circle cx="{x1 + 24}" cy="{ry + 34 + j * 24 - 4}" '
+                     f'r="2.2" fill="{N["amber"] if hi else N["mute"]}"/>')
+            g.append(T(x1 + 34, ry + 34 + j * 24, ln[1:] if hi else ln,
+                       size=13.5, weight="700" if hi else "400",
+                       fill=N["amber"] if hi else N["sub"]))
+        iw = 24 + est_w(row["issue"], 12.5)
+        g.append(R(x1 + 22, ry + rh - 46, iw, 28, r=14,
+                   fill=N["amber_soft"], stroke=N["amber_line"]))
+        g.append(TC(x1 + 22 + iw / 2, ry + rh - 32, row["issue"], size=12.5,
+                    weight="700", fill=N["amber"]))
 
-    # ── 개선 후 : 무엇이 바뀌었는지 ──────────────────────────────────
-    by, bbh = ly + 68, 228
-    tac = N["teal_dk"]
-    g.append(T(M, by + 84, TOBE_LABEL, size=19, weight="700", fill=tac))
-    g.append(T(M, by + 105, TOBE_SUB, size=11.5, weight="700", fill=N["mute"],
-               spacing="1"))
-    for i, st in enumerate(TOBE):
-        x = colx(i)
-        cx = colc(i)
-        g.append(f'<path d="M {cx},{by - 26} v 18" stroke="{tac}" '
-                 f'stroke-width="2.4" stroke-linecap="round"/>')
-        g.append(f'<path d="M {cx - 7},{by - 12} L {cx},{by - 2} '
-                 f'L {cx + 7},{by - 12} Z" fill="{tac}"/>')
-        g.append(R(x, by, cw, bbh, r=11, fill=N["page"],
-                   stroke=N["teal_line"], sw=1.6))
-        g.append(R(x, by, cw, 5, r=2.5, fill=tac))
-        tg = st.get("tag", "")
-        tgw = 22 + est_w(tg, 11.5)
-        g.append(R(x + 14, by + 16, tgw, 24, r=12, fill=tac))
-        g.append(TC(x + 14 + tgw / 2, by + 28, tg, size=11.5, weight="700",
-                    fill="#FFFFFF"))
-        bf = st.get("before", "")
-        if bf:
-            g.append(TC(x + 16, by + 62, "기존", size=10.5, weight="700",
-                        anchor="start", fill=N["mute"], spacing="1"))
-            g.append(T(x + 48, by + 66, bf, size=12.5, fill=N["mute"]))
-            g.append(f'<path d="M {x + 46},{by + 62} h {est_w(bf, 12.5) + 4}" '
-                     f'stroke="{N["mute"]}" stroke-width="1.4"/>')
-            g.append(f'<path d="M {x + 24},{by + 78} v 10" stroke="{tac}" '
-                     f'stroke-width="2" stroke-linecap="round"/>')
-            g.append(f'<path d="M {x + 19},{by + 86} L {x + 24},{by + 94} '
-                     f'L {x + 29},{by + 86} Z" fill="{tac}"/>')
-        ty = by + 106 if bf else by + 70
-        for j, ln in enumerate(st["after"]):
-            g.append(T(x + 16, ty + j * 22, ln, size=13.5, weight="700",
+        # 개선 후
+        gw = 26 + est_w(row["gain"], 13)
+        gx = x3 - 22 - gw
+        for j, ln in enumerate(row["after"]):
+            g.append(f'<path d="M {x2 + 24},{ry + 34 + j * 24 - 4} h 8" '
+                     f'stroke="{N["teal_dk"]}" stroke-width="2" '
+                     f'stroke-linecap="round"/>')
+            g.append(T(x2 + 40, ry + 34 + j * 24, ln, size=13.5, weight="700",
                        fill=N["ink"]))
-        gy = by + bbh - 50
-        g.append(R(x + 10, gy, cw - 20, 36, r=8, fill=N["teal_soft"],
-                   stroke=N["teal_line"]))
-        g.append(TC(x + cw / 2, gy + 18, st.get("gain", ""), size=13,
-                    weight="700", fill=tac))
+        g.append(R(gx, ry + rh / 2 - 16, gw, 32, r=16, fill=N["teal_dk"]))
+        g.append(TC(gx + gw / 2, ry + rh / 2, row["gain"], size=13,
+                    weight="700", fill="#FFFFFF"))
 
     # ── 맨 아래 한 줄 ────────────────────────────────────────────────
-    ny = by + bbh + 32
-    g.append(R(M, ny, W - 2 * M, 42, r=9, fill=N["navy"]))
-    g.append(icon("shield", M + 26, ny + 21, 19, N["teal"], sw=1.7))
-    g.append(TC(M + 48, ny + 21, F_NOTE, size=13.5, weight="700",
+    ny = ty + tbl_h + 28
+    g.append(R(M, ny, W - 2 * M, 44, r=9, fill=N["navy"]))
+    g.append(icon("shield", M + 26, ny + 22, 19, N["teal"], sw=1.7))
+    g.append(TC(M + 48, ny + 22, F_NOTE, size=13.5, weight="700",
                 fill="#FFFFFF", anchor="start", ghost=N["ghost_navy"]))
-    g.append(TC(W - M - 18, ny + 21, F_FOOTER_R, size=12,
+    g.append(TC(W - M - 18, ny + 22, F_FOOTER_R, size=12,
                 fill=N["on_navy_sub"], anchor="end", ghost=N["ghost_navy"]))
-    g.append(T(M, ny + 64, F_FOOTER_L, size=12, fill=N["mute"]))
+    g.append(T(M, ny + 70, F_FOOTER_L, size=12, fill=N["mute"]))
 
     g.append('</svg>')
     return "".join(g)
