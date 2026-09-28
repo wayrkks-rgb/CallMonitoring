@@ -276,7 +276,7 @@ TOBE = [
      "body": ["운영본과 수정본 전체 자동 비교",
               "*변경 블록 · 함수 · 변수만 추출",
               "연관 시나리오까지 한 번에 확인"], "tag": "건당 10분"},
-    {"icon": "shield", "title": "혼재 여부 사전 확인",
+    {"icon": "shield", "title": "운영 배포 전 사전 검증",
      "body": ["SR 간 중복 변경 여부 확인",
               "*제외 대상 · 누락분 배포 전 식별",
               "확인 후 운영 반영"], "tag": "9월 재배포 0건"},
@@ -301,8 +301,8 @@ F_FOOTER_R = "변경 검증 · 장애 분석 단계만 시스템으로 대체"
 W, H = 1600, 900                      # 16:9 (PPT 기본 비율)
 M = 48                                # 바깥 여백
 
-FONT = ("'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo',"
-        "'Noto Sans KR','Noto Sans CJK KR','NanumGothic','Nanum Gothic',"
+FONT = ("'NanumGothic','나눔고딕','Nanum Gothic','NanumBarunGothic',"
+        "'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo','Noto Sans KR',"
         "sans-serif")
 
 C = {
@@ -407,6 +407,18 @@ def T(x, y, s, size=15, fill=None, weight="400", anchor="start",
             f'text-anchor="{anchor}"{sp}>{esc(s)}</text>')
 
 
+def TC(x, cy, s, size=15, fill=None, weight="400", anchor="middle",
+       spacing=None, keep=False, ghost=None):
+    """글자의 세로 가운데가 cy 에 오도록 그린다.
+
+    기준선(baseline)으로 위치를 잡으면 글꼴마다 몇 px 씩 어긋난다.
+    나눔고딕에서 글자가 실제로 차지하는 영역의 중심은 기준선보다
+    0.315em 위에 있어(실측), 그만큼 내려서 기준선을 잡는다.
+    """
+    return T(x, cy + size * 0.315, s, size=size, fill=fill, weight=weight,
+             anchor=anchor, spacing=spacing, keep=keep, ghost=ghost)
+
+
 def R(x, y, w, h, r=10, fill="none", stroke=None, sw=1):
     st = f' stroke="{stroke}" stroke-width="{sw}"' if stroke else ""
     return (f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{r}" ry="{r}" '
@@ -424,8 +436,7 @@ def pill(x, y, label, color, soft):
     """섹션 라벨 (작은 알약). 빈 버전에서는 테두리만 남는다."""
     w = 26 + int(len(label) * 15.5)
     out = [R(x, y, w, 30, r=15, fill=soft, stroke=color, sw=1),
-           T(x + w / 2, y + 20, label, size=15, fill=color,
-             weight="700", anchor="middle")]
+           TC(x + w / 2, y + 15, label, size=15, fill=color, weight="700")]
     return "".join(out), w
 
 
@@ -435,8 +446,7 @@ def tag(x, y, label, color, soft, border):
         return ""
     w = 22 + est_w(label, 12.5)
     out = [R(x - w, y, w, 24, r=12, fill=soft, stroke=border, sw=1),
-           T(x - w / 2, y + 16, label, size=12.5, fill=color,
-             weight="700", anchor="middle")]
+           TC(x - w / 2, y + 12, label, size=12.5, fill=color, weight="700")]
     return "".join(out)
 
 
@@ -466,8 +476,8 @@ def chip_left(x, y, label, color, soft, border, size=13.5, minw=150):
     """왼쪽 기준의 작은 칩. 빈 버전에서는 테두리만 남는다."""
     w = max(minw, 28 + est_w(label, size))
     return "".join([R(x, y, w, 32, r=16, fill=soft, stroke=border, sw=1),
-                    T(x + 14, y + 21, label, size=size, fill=color,
-                      weight="700")])
+                    TC(x + 14, y + 16, label, size=size, fill=color, weight="700",
+                       anchor="start")])
 
 
 def drop(cx, y1, y2, color):
@@ -661,8 +671,8 @@ def build_overview():
         # 제목 + 아이콘
         g.append(f'<circle cx="{x + 38}" cy="{cy + 40}" r="19" '
                  f'fill="{C["blue"]}"/>')
-        g.append(T(x + 38, cy + 47, cd["no"], size=19, weight="700",
-                   fill="#FFFFFF", anchor="middle", keep=True))
+        g.append(TC(x + 38, cy + 40, cd["no"], size=19, weight="700",
+                    fill="#FFFFFF", keep=True))
         g.append(icon(cd.get("icon", ""), x + cw - 40, cy + 40, 30,
                       C["blue"], sw=1.7, opacity=0.9))
         for j, ln in enumerate(cd["title"]):
@@ -694,8 +704,8 @@ def build_overview():
         ey = cy + 312
         g.append(R(x + 16, ey, cw - 32, 32, r=8, fill=C["green_soft"],
                    stroke=C["green_line"]))
-        g.append(T(x + cw / 2, ey + 21, "▶  " + cd["effect"], size=14.5,
-                   weight="700", fill=C["green"], anchor="middle"))
+        g.append(TC(x + cw / 2, ey + 16, "▶  " + cd["effect"], size=14.5,
+                    weight="700", fill=C["green"]))
 
     # ── 꼬리말 ───────────────────────────────────────────────────────
     g.append(T(M, 880, FOOTER_L, size=13.5, fill=C["mute"]))
@@ -741,8 +751,8 @@ def build_effect():
         g.append(f'<circle cx="{ix + 18}" cy="{ry + 52}" r="18" '
                  f'fill="{N["teal_soft"]}" stroke="{N["teal_line"]}" '
                  f'stroke-width="1"/>')
-        g.append(T(ix + 18, ry + 58, q["no"], size=16, weight="700",
-                   fill=N["teal_dk"], anchor="middle", keep=True))
+        g.append(TC(ix + 18, ry + 52, q["no"], size=16, weight="700",
+                    fill=N["teal_dk"], keep=True))
         g.append(T(ix + 52, ry + 46, q["title"], size=20, weight="700",
                    fill=N["ink"]))
         g.append(T(ix + 52, ry + 70, q["note"], size=12.5, fill=N["mute"]))
@@ -752,15 +762,15 @@ def build_effect():
         gx = W - M - 28 - gw
         g.append(R(gx, ry + 35, gw, 34, r=17, fill=N["teal_soft"],
                    stroke=N["teal_line"], sw=1))
-        g.append(T(gx + gw / 2, ry + 58, q["gain"], size=14.5, weight="700",
-                   fill=N["teal_dk"], anchor="middle"))
+        g.append(TC(gx + gw / 2, ry + 52, q["gain"], size=14.5, weight="700",
+                    fill=N["teal_dk"]))
 
         ax = gx - 34
         aw = est_w(q["after"], 44)
         g.append(T(ax, ry + 66, q["after"], size=44, weight="800",
                    fill=N["teal_dk"], anchor="end"))
         g.append(big_arrow(ax - aw - 26, ry + 52, N["mute"]))
-        g.append(T(ax - aw - 52, ry + 64, q["before"], size=30, weight="700",
+        g.append(T(ax - aw - 52, ry + 62, q["before"], size=30, weight="700",
                    fill=N["mute"], anchor="end"))
 
     # ── 정성 (흰 바탕, 테두리 없는 3단) ──────────────────────────────
@@ -873,15 +883,14 @@ def build_roadmap():
         cwid = 24 + est_w(lbl, 13)
         if now:
             g.append(R(x + 20, cy + 20, cwid, 28, r=14, fill=N["teal_dk"]))
-            g.append(T(x + 20 + cwid / 2, cy + 39, lbl, size=13, weight="700",
-                       fill="#FFFFFF", anchor="middle"))
+            g.append(TC(x + 20 + cwid / 2, cy + 34, lbl, size=13, weight="700",
+                        fill="#FFFFFF"))
         else:
             g.append(R(x + 20, cy + 20, cwid, 28, r=14,
                        fill=N["page"] if future else "#E6ECF2",
                        stroke=N["teal_line"] if future else None))
-            g.append(T(x + 20 + cwid / 2, cy + 39, lbl, size=13, weight="700",
-                       fill=N["teal_dk"] if future else N["sub"],
-                       anchor="middle"))
+            g.append(TC(x + 20 + cwid / 2, cy + 34, lbl, size=13, weight="700",
+                        fill=N["teal_dk"] if future else N["sub"]))
 
         g.append(T(x + 20, cy + 94, st["title"], size=22, weight="700",
                    fill=N["ink"] if not future else N["ink"]))
@@ -899,23 +908,21 @@ def build_roadmap():
         ky = cy + 318
         if now:
             g.append(R(x + 20, ky, cw - 40, 46, r=10, fill=N["teal_dk"]))
-            g.append(T(cx, ky + 30, st["key"], size=17, weight="700",
-                       fill="#FFFFFF", anchor="middle"))
+            g.append(TC(cx, ky + 23, st["key"], size=17, weight="700", fill="#FFFFFF"))
         else:
             g.append(R(x + 20, ky, cw - 40, 46, r=10,
                        fill=N["teal_soft"] if future else "#E9EEF3",
                        stroke=N["teal_line"] if future else None))
-            g.append(T(cx, ky + 30, st["key"], size=17, weight="700",
-                       fill=N["teal_dk"] if future else N["mute"],
-                       anchor="middle"))
+            g.append(TC(cx, ky + 23, st["key"], size=17, weight="700",
+                        fill=N["teal_dk"] if future else N["mute"]))
 
     # ── 근거 한 줄 ───────────────────────────────────────────────────
     ny = 746
     g.append(R(M, ny, W - 2 * M, 58, r=10, fill=N["teal_soft"],
                stroke=N["teal_line"]))
     g.append(icon("spark", M + 32, ny + 29, 22, N["teal_dk"], sw=1.7))
-    g.append(T(M + 58, ny + 35, R_NOTE, size=15, weight="700",
-               fill=N["teal_dk"]))
+    g.append(TC(M + 58, ny + 29, R_NOTE, size=15, weight="700",
+                fill=N["teal_dk"], anchor="start"))
 
     g.append(T(M, 856, R_FOOTER_L, size=13, fill=N["mute"]))
     g.append(T(W - M, 856, R_FOOTER_R, size=13, fill=N["mute"], anchor="end"))
@@ -970,7 +977,7 @@ def build_flow():
                 g.append(R(x, y, cw, bh, r=12, fill=N["soft"],
                            stroke=N["line"], sw=1))
             g.append(R(x + 1, y + 16, 4, bh - 32, r=2, fill=acc))
-            g.append(icon(st.get("icon", ""), x + 34, y + 36, 24, acc, sw=1.7))
+            g.append(icon(st.get("icon", ""), x + 34, y + 39, 24, acc, sw=1.7))
             g.append(T(x + 58, y + 44, st["title"], size=16.5, weight="700",
                        fill=N["ink"]))
             g.append(f'<path d="M {x + 20},{y + 62} L {x + cw - 20},{y + 62}" '
@@ -994,9 +1001,9 @@ def build_flow():
         g.append(R(cx0, y, tw, 44, r=10,
                    fill=N["teal_soft"] if tobe else N["amber_soft"],
                    stroke=N["teal_line"] if tobe else N["amber_line"], sw=1))
-        g.append(T(cx0 + 20, y + 28, ("▶  " if tobe else "!  ") + text,
-                   size=14, weight="700",
-                   fill=N["teal_dk"] if tobe else N["amber"]))
+        g.append(TC(cx0 + 20, y + 22, ("▶  " if tobe else "!  ") + text,
+                    size=14, weight="700", anchor="start",
+                    fill=N["teal_dk"] if tobe else N["amber"]))
 
     # ── 개선 전 ──────────────────────────────────────────────────────
     y1 = 202
@@ -1022,7 +1029,8 @@ def build_flow():
     g.append(R(M, ny, W - 2 * M, 48, r=10, fill=N["soft"],
                stroke=N["line"], sw=1))
     g.append(icon("shield", M + 30, ny + 24, 20, N["teal_dk"], sw=1.7))
-    g.append(T(M + 54, ny + 29, F_NOTE, size=14, weight="700", fill=N["ink"]))
+    g.append(TC(M + 54, ny + 24, F_NOTE, size=14, weight="700", fill=N["ink"],
+                anchor="start"))
 
     g.append(T(M, 868, F_FOOTER_L, size=12.5, fill=N["mute"]))
     g.append(T(W - M, 868, F_FOOTER_R, size=12.5, fill=N["mute"],
