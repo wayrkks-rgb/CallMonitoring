@@ -234,6 +234,55 @@ R_NOTE = ("3단계는 채널 상태 · 통화 종료 사유가 이미 수집 · 
 R_FOOTER_L = "※ 자동 조치는 담당자 승인 후 수행 전제"
 R_FOOTER_R = "2단계 완료 · 3단계 이후 단계적 적용"
 
+
+# ─────────────────────────────────────────────────────────────────────────
+#  개선 전 · 후 업무 흐름 장표 (--page flow)
+# ─────────────────────────────────────────────────────────────────────────
+
+F_TITLE = "개선 전 · 후 업무 흐름"
+F_SUBTITLE = "ARS 시나리오 변경부터 장애 분석까지"
+F_META = "시나리오 디자이너 · OAMP 등 기존 운영 절차 변경 없음"
+
+#  두 흐름을 같은 단계에 맞춰 세운다
+PHASES = ["소스 수정", "변경 검증", "운영 반영", "장애 · 문의 분석"]
+
+ASIS_LABEL, ASIS_SUB = "개선 전", "AS-IS"
+TOBE_LABEL, TOBE_SUB = "개선 후", "TO-BE"
+
+ASIS = [
+    {"icon": "edit", "title": "시나리오 디자이너 수정",
+     "body": ["ARS 소스(XML) 직접 수정"]},
+    {"icon": "manual", "title": "함수 단위 육안 확인",
+     "body": ["시나리오 XML 블록 내", "함수를 하나씩 열어 대조",
+              "변경 범위 · 영향 파악 곤란"]},
+    {"icon": "deploy", "title": "OAMP 운영 반영",
+     "body": ["검증 범위 확인 없이 반영"]},
+    {"icon": "manual", "title": "전체 로그 직접 분석",
+     "body": ["고객 정보로 전체 로그 조회", "처음부터 끝까지 확인",
+              "중단 지점 직접 판단"]},
+]
+
+TOBE = [
+    {"icon": "edit", "title": "시나리오 디자이너 수정", "same": True,
+     "body": ["ARS 소스(XML) 직접 수정"]},
+    {"icon": "diff", "title": "변경 내용 자동 비교",
+     "body": ["저장 시 두 시나리오 비교", "변경 블록 · 함수만 추출",
+              "연관 서비스 영향도 표시"]},
+    {"icon": "shield", "title": "영향도 확인 후 반영",
+     "body": ["변경 내용 확인 후 OAMP 반영", "사전 검증을 배포 절차에 편입"]},
+    {"icon": "breakpoint", "title": "통화 흐름 요약 우선 제시",
+     "body": ["통화 흐름 요약을 먼저 표시", "중단 지점 · 종료 사유 제시",
+              "해당 구간만 확인"]},
+]
+
+ASIS_RESULT = "배포 후 운영 검증 단계에서 오류 발견 · 재배포, 장애 지점 확인까지 전체 로그 분석 필요"
+TOBE_RESULT = "배포 전 변경 내용과 영향 범위 확인, 장애 지점 즉시 확인으로 확산 방지"
+
+F_NOTE = ("소스 수정과 운영 반영 절차는 그대로 두고 검증 · 분석 방식만 변경 "
+          "— 기존 개발 · 배포 도구 교체 없음")
+F_FOOTER_L = "※ 개선 후에도 시나리오 디자이너와 OAMP 는 기존과 동일하게 사용"
+F_FOOTER_R = "변경 검증 · 장애 분석 단계만 시스템으로 대체"
+
 # ─────────────────────────────────────────────────────────────────────────
 # 2. 레이아웃 / 색
 # ─────────────────────────────────────────────────────────────────────────
@@ -861,11 +910,119 @@ def build_roadmap():
     return "".join(g)
 
 
+def build_flow():
+    """개선 전 · 후 업무 흐름 장표 — 같은 단계끼리 위아래로 맞춰 비교."""
+    g = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+         f'viewBox="0 0 {W} {H}">',
+         R(0, 0, W, H, r=0, fill=N["page"])]
+
+    # ── 머리글 ───────────────────────────────────────────────────────
+    g.append(R(0, 0, W, 118, r=0, fill=N["navy"]))
+    g.append(T(M, 62, F_TITLE, size=30, weight="700", fill=N["on_navy"],
+               ghost=N["ghost_navy"]))
+    g.append(T(M, 90, F_SUBTITLE, size=14, fill=N["on_navy_sub"],
+               ghost=N["ghost_navy"]))
+    g.append(T(W - M, 76, F_META, size=13, fill=N["teal"], anchor="end",
+               ghost=N["ghost_navy"]))
+
+    cx0 = M + 108                                 # 왼쪽은 흐름 이름 자리
+    tw = W - M - cx0                              # 단계가 놓이는 폭
+    gap = 44
+    n = len(PHASES)
+    cw = (tw - gap * (n - 1)) / n
+
+    # ── 단계 이름 ────────────────────────────────────────────────────
+    for i, ph in enumerate(PHASES):
+        x = cx0 + i * (cw + gap)
+        pw = 28 + est_w(ph, 13.5)
+        g.append(R(x + cw / 2 - pw / 2, 148, pw, 30, r=15,
+                   fill=N["soft"], stroke=N["line"], sw=1))
+        g.append(T(x + cw / 2, 168, ph, size=13.5, weight="700",
+                   fill=N["sub"], anchor="middle"))
+
+    def lane(steps, y, label, sub, tobe):
+        bh = 160
+        g.append(T(M, y + 64, label, size=18, weight="700",
+                   fill=N["teal_dk"] if tobe else N["mute"]))
+        g.append(T(M, y + 86, sub, size=12, weight="700", fill=N["mute"],
+                   spacing="1"))
+        for i, st in enumerate(steps):
+            x = cx0 + i * (cw + gap)
+            same = st.get("same")
+            if tobe:
+                g.append(R(x, y, cw, bh, r=12, fill=N["page"],
+                           stroke=N["line"] if same else N["teal_line"],
+                           sw=1 if same else 1.8))
+            else:
+                g.append(R(x, y, cw, bh, r=12, fill=N["soft"],
+                           stroke=N["line"], sw=1))
+            ic = N["mute"] if (not tobe or same) else N["teal_dk"]
+            g.append(icon(st.get("icon", ""), x + 30, y + 34, 24, ic, sw=1.7))
+            g.append(T(x + 54, y + 42, st["title"], size=16.5, weight="700",
+                       fill=N["sub"] if not tobe else N["ink"]))
+            g.append(f'<path d="M {x + 20},{y + 60} L {x + cw - 20},{y + 60}" '
+                     f'stroke="{N["line"]}" stroke-width="1"/>')
+            for j, ln in enumerate(st["body"]):
+                g.append(T(x + 20, y + 88 + j * 22, ln, size=13.5,
+                           fill=N["sub"] if tobe and not same else N["mute"]))
+            if same:
+                # 제목과 겹치지 않도록 아래쪽 오른편에 둔다
+                g.append(tag(x + cw - 16, y + bh - 42, "기존과 동일",
+                             N["mute"], N["soft"], N["line"]))
+            if i < n - 1:
+                g.append(arrow_right(x + cw + gap / 2, y + bh / 2,
+                                     N["teal_dk"] if tobe else N["mute"]))
+        return y + bh
+
+    def result(y, text, tobe):
+        g.append(R(cx0, y, tw, 44, r=10,
+                   fill=N["teal_soft"] if tobe else "#EFF2F5",
+                   stroke=N["teal_line"] if tobe else N["line"], sw=1))
+        g.append(T(cx0 + 20, y + 28, ("▶  " if tobe else "·  ") + text,
+                   size=14, weight="700",
+                   fill=N["teal_dk"] if tobe else N["mute"]))
+
+    # ── 개선 전 ──────────────────────────────────────────────────────
+    y1 = 206
+    lane(ASIS, y1, ASIS_LABEL, ASIS_SUB, False)
+    result(y1 + 176, ASIS_RESULT, False)
+
+    # ── 두 흐름 사이 구분 ────────────────────────────────────────────
+    my = 452
+    g.append(f'<path d="M {M},{my} L {W - M},{my}" stroke="{N["teal_line"]}" '
+             f'stroke-width="1.4" stroke-dasharray="5 6"/>')
+    pw = 28 + est_w("개선 적용", 13.5)
+    g.append(R(W / 2 - pw / 2, my - 15, pw, 30, r=15, fill=N["teal_dk"]))
+    g.append(T(W / 2, my + 5, "개선 적용", size=13.5, weight="700",
+               fill="#FFFFFF", anchor="middle"))
+
+    # ── 개선 후 ──────────────────────────────────────────────────────
+    y2 = 490
+    lane(TOBE, y2, TOBE_LABEL, TOBE_SUB, True)
+    result(y2 + 176, TOBE_RESULT, True)
+
+    # ── 핵심 한 줄 ───────────────────────────────────────────────────
+    ny = 786
+    g.append(R(M, ny, W - 2 * M, 48, r=10, fill=N["soft"],
+               stroke=N["line"], sw=1))
+    g.append(icon("shield", M + 30, ny + 24, 20, N["teal_dk"], sw=1.7))
+    g.append(T(M + 54, ny + 29, F_NOTE, size=14, weight="700", fill=N["ink"]))
+
+    g.append(T(M, 868, F_FOOTER_L, size=12.5, fill=N["mute"]))
+    g.append(T(W - M, 868, F_FOOTER_R, size=12.5, fill=N["mute"],
+               anchor="end"))
+
+    g.append('</svg>')
+    return "".join(g)
+
+
 def build_svg(page="overview"):
     if page == "effect":
         return build_effect()
     if page == "roadmap":
         return build_roadmap()
+    if page == "flow":
+        return build_flow()
     return build_overview()
 
 
@@ -904,10 +1061,11 @@ def main():
                     help="빈 버전에 글자 들어갈 자리를 연한 막대로 표시")
     ap.add_argument("--only", choices=["full", "blank"], default=None,
                     help="문구 있는 것 / 빈 것 중 한 쪽만 생성 (기본은 둘 다)")
-    ap.add_argument("--page", choices=["overview", "effect", "roadmap", "all"],
+    ap.add_argument("--page",
+                    choices=["overview", "flow", "effect", "roadmap", "all"],
                     default="all",
-                    help="overview=구축 요약, effect=기대효과, roadmap=향후 계획 "
-                         "(기본은 전부)")
+                    help="overview=구축 요약, flow=개선 전후 흐름, "
+                         "effect=기대효과, roadmap=향후 계획 (기본은 전부)")
     ap.add_argument("--png", action="store_true",
                     help="cairosvg 가 설치돼 있으면 PNG 도 함께 생성")
     ap.add_argument("--scale", type=float, default=2.0,
@@ -923,7 +1081,7 @@ def main():
     base, ext = os.path.splitext(args.out)
     ext = ext or ".svg"
 
-    pages = (["overview", "effect", "roadmap"] if args.page == "all"
+    pages = (["overview", "flow", "effect", "roadmap"] if args.page == "all"
              else [args.page])
     for page in pages:
         stem = base if page == "overview" else base + "_" + page
