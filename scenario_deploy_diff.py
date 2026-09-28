@@ -37,7 +37,7 @@ CACHE_VERSION = 5   # 파서 변경(scenario/block 형식 지원) → 전량 재
 # 리포트(diff 결과) 형식 버전. 리포트에 담는 항목이 바뀌면 올린다.
 # scenario_deploy.check() 가 캐시 키와 검증에 쓴다 — 올리지 않으면
 # 시나리오가 그대로일 때 예전 형식 리포트가 계속 나온다.
-REPORT_VERSION = 4
+REPORT_VERSION = 5   # 끊어진 이동(broken) 검출 추가
 
 
 # ══════════════════════════════════════════════════════════════
@@ -703,6 +703,56 @@ def _block_brief(b):
     return d
 
 
+# 이동 대상이 파일명처럼 생긴 경우만 본다 (변수 · 식은 정적으로 알 수 없음)
+_PAGE_NAME = re.compile(r"^[\w가-힣\-\.]+$")
+# 블록 이동 대상은 Sequence(숫자) 형식일 때만 본다. 노드 GUID 같은 다른 형식을
+# 블록 번호와 비교하면 전부 '없음' 으로 잘못 잡힌다.
+_SEQ_LIKE = re.compile(r"^\d{4,12}$")
+
+
+def find_broken_refs(snap):
+    """끊어진 이동 — 존재하지 않는 시나리오나 블록으로 가는 이동.
+
+    배포되면 통화가 그 지점에서 멈추거나 오류로 끝나는, 확정적인 장애 요인이다.
+    변경 내용 비교(무엇이 바뀌었나)와 달리, 이것은 '이대로 나가면 깨진다' 를
+    배포 전에 잡아낸다.
+
+    - page : TargetPage 의 시나리오 파일이 폴더에 없음
+    - node : 시나리오는 있는데 TargetNodeId 의 블록이 그 안에 없음
+    스크립트에서 계산되는 동적 이동은 정적으로 알 수 없어 대상에서 빠진다.
+    """
+    stems = {os.path.splitext(k)[0].lower(): f for k, f in snap.items()}
+    out = []
+    for f in snap.values():
+        for b in f["blocks"].values():
+            tp = (b.get("target") or "").strip()
+            bn = os.path.basename(tp)
+            if not tp or not _PAGE_NAME.match(bn):
+                continue
+            # 'app.sNextPage' 처럼 점이 있는데 시나리오 확장자가 아니면 변수다
+            if "." in bn and not bn.lower().endswith((".xml", ".dxml")):
+                continue
+            tstem = os.path.splitext(os.path.basename(tp))[0].lower()
+            tf = stems.get(tstem)
+            base = {"file": f["file"], "seq": b["seq"],
+                    "label": b.get("label") or b.get("type") or "",
+                    "target": tp}
+            if tf is None:
+                out.append(dict(base, kind="page", target_node="",
+                                why="이동할 시나리오 파일이 없음"))
+                continue
+            tn = (b.get("target_node") or "").strip()
+            if tn and _SEQ_LIKE.match(tn) and tn not in tf["blocks"]:
+                out.append(dict(base, kind="node", target_node=tn,
+                                why="이동할 블록이 대상 시나리오에 없음"))
+    return out
+
+
+def _broken_key(x):
+    return (x["file"].lower(), x["seq"], x["kind"], x["target"].lower(),
+            x.get("target_node") or "")
+
+
 def diff_snapshots(old, new, locate=None):
     """
     두 스냅샷 비교 → 리포트.
@@ -716,6 +766,7 @@ def diff_snapshots(old, new, locate=None):
             "blocks_added": 0, "blocks_removed": 0, "blocks_modified": 0,
             "flow_changes": 0, "script_changes": 0, "screen_changes": 0,
             "link_changes": 0, "var_changes": 0, "truncated": False,
+            "broken_new": 0, "broken_total": 0,
         },
         "added_files": [], "removed_files": [], "files": [],
     }
@@ -904,6 +955,21 @@ def diff_snapshots(old, new, locate=None):
         {"code": c, "name": screen_name(c), "files": sorted(v)}
         for c, v in sorted(codes.items())
     ]
+
+    # 끊어진 이동 — 이번 변경으로 새로 생긴 것과, 원래부터 있던 것을 나눈다.
+    # 새로 생긴 것이 곧 '배포 전에 잡아낸 장애 요인' 이다.
+    try:
+        nb = find_broken_refs(new)
+        ob_keys = {_broken_key(x) for x in find_broken_refs(old)}
+        fresh = [x for x in nb if _broken_key(x) not in ob_keys]
+        report["broken"] = {"new": fresh[:200],
+                            "existing": [x for x in nb
+                                         if _broken_key(x) in ob_keys][:200]}
+        S["broken_new"] = len(fresh)
+        S["broken_total"] = len(nb)
+    except Exception as e:                      # 검출 실패가 비교 전체를 막지 않게
+        logger.warning("끊어진 이동 검출 실패: %s", e)
+        report["broken"] = {"new": [], "existing": []}
     return report
 
 

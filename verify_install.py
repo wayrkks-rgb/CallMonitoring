@@ -113,6 +113,14 @@ CHECKS = [
      "구성도 준비 상태 API (/api/topology/warm)"),
     ("templates/topology.html", "warmMsg",
      "FLOW 뷰어에 '구성도 준비 중 %' 표시 + 완료 시 자동 갱신"),
+    ("scenario_deploy_diff.py", "find_broken_refs",
+     "끊어진 이동 검출 — 없으면 존재하지 않는 시나리오 · 블록 호출을 못 잡는다"),
+    ("templates/deploy_diff.html", "brokenHtml",
+     "DIFF 상단 '끊어진 이동 — 배포 전 수정 필요' 경고"),
+    ("diag_broken_links.py", "find_broken_refs",
+     "끊어진 이동 전수 점검 스크립트"),
+    ("diag_call_volume.py", "영향 통화",
+     "시간당 콜 수 · 장애 1건당 영향 통화 계산 스크립트"),
 ]
 
 
