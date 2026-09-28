@@ -288,9 +288,21 @@
     a{text-decoration:none!important;color:inherit!important}
     .doc-inner>.h{margin-bottom:2mm}
   }
+  .deepbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:9px 16px;background:#fff8ef;border-bottom:1px solid #ffe2c2;
+    font-size:13px;color:#8a5a12}
+  .deepbar b{color:#d9660a}
+  .deepbar .db-seg{display:inline-flex;border:1px solid #f0c48a;border-radius:7px;overflow:hidden}
+  .deepbar .db-seg button{border:0;background:#fff;color:#8a5a12;font-size:12px;
+    padding:4px 11px;cursor:pointer;font-weight:600}
+  .deepbar .db-seg button.on{background:#d9660a;color:#fff}
+  .deepbar .db-x{margin-left:auto;cursor:pointer;color:#b08050;font-size:12px}
+  .srcb.deep-hit{box-shadow:0 0 0 3px #f6ad55;border-radius:8px}
+  @media print{.deepbar{display:none!important}}
 </style>
 </head>
 <body>
+<div id="deepbar" class="deepbar" style="display:none"></div>
 <div class="topbar">
   <h1>ARS FLOW 뷰어</h1>
   <span class="badge" id="badge">시나리오 선택</span>
@@ -348,12 +360,107 @@ function printFlow(){
   setTimeout(restore, 3000);   // afterprint 미지원 브라우저 대비
 }
 
+/* ── 딥링크 ───────────────────────────────────────────────────────
+   로그 뷰어나 시나리오 DIFF 에서 "전체 FLOW 뷰어에서 보기"로 넘어오면
+   ?env=&page=&block=&at=start|end (&other_page=&other_block=&other_at=)
+   을 받아, 그 블록이 속한 업무 트리를 열고 해당 블록으로 이동한다. */
+let DEEP=null;
+
+function _deepParams(){
+  const u=new URLSearchParams(location.search);
+  const g=k=>(u.get(k)||'').trim();
+  if(!g('page') && !g('block')) return null;
+  return {env:g('env'), page:g('page'), block:g('block'),
+          at:g('at')||'end', label:g('label'),
+          other:{page:g('other_page'), block:g('other_block'),
+                 at:g('other_at')||'start'},
+          view:g('view')||'detail'};
+}
+
+function _atName(at){ return at==='start'?'시작 단계':at==='end'?'종료(중단) 단계':at==='change'?'변경한 블록':'지정 위치'; }
+
+function renderDeepBar(){
+  const bar=document.getElementById('deepbar');
+  if(!DEEP){ bar.style.display='none'; return; }
+  const hasOther=!!(DEEP.other && DEEP.other.block);
+  let segh='';
+  if(hasOther){
+    segh=`<span class="db-seg">
+      <button class="${DEEP.at==='start'?'on':''}" onclick="deepSwap('start')">시작 단계</button>
+      <button class="${DEEP.at==='end'?'on':''}" onclick="deepSwap('end')">종료 단계</button></span>`;
+  }
+  bar.innerHTML=`<span>🔗 연결해서 열림 —</span>`
+    + `<b>${esc(_atName(DEEP.at))}</b>`
+    + `<span>${esc((DEEP.page||'').replace(/\.(d?xml)$/,''))} · 블록 ${esc(DEEP.block||'')}</span>`
+    + segh
+    + `<span class="db-x" onclick="deepClear()">✕ 연결 해제</span>`;
+  bar.style.display='flex';
+}
+function deepClear(){ DEEP=null; renderDeepBar();
+  document.querySelectorAll('.srcb.deep-hit').forEach(e=>e.classList.remove('deep-hit')); }
+function deepSwap(at){
+  if(!DEEP || at===DEEP.at) return;
+  const cur={page:DEEP.page, block:DEEP.block, at:DEEP.at};
+  DEEP={...DEEP, page:DEEP.other.page||DEEP.page, block:DEEP.other.block||DEEP.block,
+        at:at, other:cur};
+  renderDeepBar();
+  applyDeep();
+}
+
+/* 블록이 속한 업무(진입점)를 찾는다. 못 찾으면 시나리오 자체를 진입점으로. */
+async function _resolveEntry(page, block){
+  if(block){
+    try{
+      const r=await j(`/api/topology/locate?env=${enc(ENV)}&seq=${enc(block)}`
+                      + (page?`&page=${enc(page)}`:''));
+      const m=((r.results||[])[0]||{}).matches||[];
+      if(m.length && m[0].entry) return m[0].entry;
+    }catch(e){}
+  }
+  return page||null;
+}
+
+async function applyDeep(){
+  if(!DEEP) return;
+  const entry=await _resolveEntry(DEEP.page, DEEP.block);
+  if(!entry){ _topoToast('연결된 시나리오를 찾지 못했습니다.'); return; }
+  SEL=entry; window.TOPO_ENV=ENV; window.TOPO_PAGE=entry; IS_MENU=false;
+  document.getElementById('badge').textContent=entry;
+  const crumb=document.getElementById('crumb');
+  if(crumb) crumb.innerHTML=`${esc(entry.replace(/\.(d?xml)$/,''))}<span class="sep">›</span>`
+      + `<span class="cur">${esc((DEEP.page||'').replace(/\.(d?xml)$/,''))}</span>`;
+  DVIEW=(DEEP.view==='summary'||DEEP.view==='map')?DEEP.view:'detail';
+  document.getElementById('dvSum').classList.toggle('on',DVIEW==='summary');
+  document.getElementById('dvDet').classList.toggle('on',DVIEW==='detail');
+  document.getElementById('dvMap').classList.toggle('on',DVIEW==='map');
+  document.getElementById('bizWrap').style.display=(DVIEW==='map')?'none':'block';
+  document.getElementById('mapWrap').style.display=(DVIEW==='map')?'block':'none';
+  if(DVIEW==='map'){ await loadMap(); }
+  else if(DVIEW==='detail'){ await loadBlocks(); deepHighlight(); }
+  else { await loadMenuSummary(); }
+}
+
+/* 블록으로 스크롤 + 표시 유지 */
+function deepHighlight(){
+  if(!DEEP || !DEEP.block) return;
+  document.querySelectorAll('.srcb.deep-hit').forEach(e=>e.classList.remove('deep-hit'));
+  const els=[...document.querySelectorAll('.sid')]
+      .filter(e=>e.textContent.trim()===DEEP.block);
+  if(!els.length){ _topoToast(`블록 ${DEEP.block} 을(를) 이 트리에서 찾지 못했습니다.`); return; }
+  const el=els[0].closest('.srcb');
+  el.classList.add('deep-hit');
+  el.scrollIntoView({behavior:'smooth',block:'center'});
+}
+
 async function init(){
   const {envs}=await j('/api/topology/envs');
   const seg=document.getElementById('envSeg');
   if(!envs.length){seg.innerHTML='<button>환경 없음</button>';return;}
-  seg.innerHTML=envs.map((e,i)=>`<button class="${i?'':'on'}" onclick="pickEnv('${e}',this)">${e}</button>`).join('');
-  pickEnv(envs[0]);
+  DEEP=_deepParams();
+  const want=DEEP&&DEEP.env&&envs.includes(DEEP.env)?DEEP.env:envs[0];
+  seg.innerHTML=envs.map(e=>`<button class="${e===want?'on':''}" onclick="pickEnv('${e}',this)">${e}</button>`).join('');
+  await pickEnv(want);
+  if(DEEP){ renderDeepBar(); await applyDeep(); }
 }
 async function pickEnv(env,btn){
   ENV=env; window.TOPO_ENV=env;
@@ -421,6 +528,7 @@ function toggleKids(chev){
 function selectNode(page,el,path,isMenu){
   IS_MENU=!!isMenu;
   if(page==='(내부 처리)'||!page)return;
+  deepClear();   // 직접 다른 업무를 고르면 연결 표시는 해제
   SEL=page; window.TOPO_ENV=ENV; window.TOPO_PAGE=page;
   document.querySelectorAll('.tnode>.row.sel').forEach(r=>r.classList.remove('sel'));
   if(el)el.closest('.row').classList.add('sel');

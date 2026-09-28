@@ -89,6 +89,22 @@ CHECKS = [
      "패턴 검색 '출처 파일별 건수' 요약"),
     ("templates/index.html", "_pendingKeyPath",
      "등록 폼 초기화/키 경로 전달 — 없으면 이전 서버 값으로 등록된다"),
+    ("routes/precheck.py", "_SCR_CODE",
+     "보이는ARS 화면코드 접두사 제한 해제 — 없으면 화면이 하나도 안 잡힌다"),
+    ("routes/precheck.py", "_topo_link",
+     "로그 → FLOW 뷰어 딥링크(시작/종료 단계)"),
+    ("templates/index.html", "inRange",
+     "구간별 '화면으로 보기'를 시각 범위로 매칭 — 없으면 같은 화면만 되풀이된다"),
+    ("templates/topology.html", "_deepParams",
+     "FLOW 뷰어 딥링크 수신 — 없으면 링크를 눌러도 첫 화면만 열린다"),
+    ("templates/topology.html", "deepHighlight",
+     "연결된 블록으로 이동·표시"),
+    ("scenario_store.py", '"entry": entry',
+     "블록 위치에 진입점 포함 — 없으면 어느 업무 트리인지 못 찾는다"),
+    ("templates/deploy_diff.html", "flowLink",
+     "DIFF 에서 변경 블록을 FLOW 뷰어로 연결"),
+    ("scenario_deploy.py", '"viewer_env": cfg.get("viewer_env")',
+     "DIFF 리포트에 뷰어 환경 이름 포함 — 없으면 FLOW 링크가 안 생긴다"),
 ]
 
 

@@ -474,7 +474,9 @@ def build_locator(env, entry):
                     if not sq:
                         continue
                     idx.setdefault(sq, []).append({
-                        "seq": sq, "page": n.get("page"),
+                        # entry(진입점)를 같이 담아야 FLOW 뷰어에서 이 블록이
+                        # 속한 업무 트리를 바로 열 수 있다.
+                        "seq": sq, "entry": entry, "page": n.get("page"),
                         "menu_path": p2[1:] if len(p2) > 1 else p2,
                         "step_no": gi, "phase": g.get("phase"),
                         "step_title": g.get("title"),

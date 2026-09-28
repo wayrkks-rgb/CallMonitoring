@@ -673,6 +673,8 @@ def check(force=False):
                 "sig": new_sig, "fetch": fetch["운영"]["mode"],
                 "pulled": fetch["운영"]["pulled"], "sec": fetch["운영"]["elapsed"]},
         "redeploy_count": len(st.get("history", [])),
+        # 업무 FLOW 뷰어로 바로 넘어가려면 뷰어가 쓰는 환경 이름이 필요하다
+        "viewer_env": cfg.get("viewer_env") or "",
     }
     return rep
 

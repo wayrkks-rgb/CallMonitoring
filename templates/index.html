@@ -524,6 +524,8 @@
         .precheck-actions{margin-top:8px;display:flex;gap:14px;flex-wrap:wrap;}
         .precheck-actions a,.precheck-actions button{font-size:12px;color:#F47725;text-decoration:none;font-weight:600;background:none;border:none;cursor:pointer;padding:0;}
         .precheck-actions button:hover{text-decoration:underline;}
+        .precheck-topo{font-size:12px;color:#8a94a6;font-weight:600;
+            border-left:1px solid #e3e8ef;padding-left:14px;margin-left:-4px;}
         .precheck-loading{font-size:12px;color:#999;padding:6px 2px;}
         /* 세그먼트 '화면으로 보기' 버튼 */
         .seg-screen-btn{font-size:11px;color:#7048e8;background:#f3f0ff;border:1px solid #e5dbff;border-radius:5px;padding:1px 7px;cursor:pointer;margin-left:6px;}
@@ -1654,15 +1656,24 @@
                 const d = _dxmlOf(s);
                 if (d && !_isSubDxml(d) && (cur === null || cur.dxml !== d)) {
                     const tm = s.match(/(\d{2}:\d{2}:\d{2})/);
-                    cur = { dxml: d, time: tm ? fmtTs(tm[1], s) : '', lines: [], subs: {} };
+                    cur = { dxml: d, time: tm ? fmtTs(tm[1], s) : '',
+                            ts0: tm ? tm[1] : '', ts1: tm ? tm[1] : '',
+                            lines: [], subs: {} };
                     segs.push(cur);
                 }
                 if (!cur) {
                     const tm = s.match(/(\d{2}:\d{2}:\d{2})/);
-                    cur = { dxml: '(콜 시작)', time: tm ? fmtTs(tm[1], s) : '', lines: [], subs: {} };
+                    cur = { dxml: '(콜 시작)', time: tm ? fmtTs(tm[1], s) : '',
+                            ts0: tm ? tm[1] : '', ts1: tm ? tm[1] : '',
+                            lines: [], subs: {} };
                     segs.push(cur);
                 }
                 cur.lines.push(s);
+                // 구간의 시각 범위 — 화면 전송이 이 구간에서 일어났는지 판정에 쓴다
+                {
+                    const t2 = s.match(/(\d{2}:\d{2}:\d{2})/);
+                    if (t2) { if (!cur.ts0) cur.ts0 = t2[1]; cur.ts1 = t2[1]; }
+                }
                 if (d && _isSubDxml(d)) cur.subs[d] = (cur.subs[d] || 0) + 1;
             });
             return segs;
@@ -3265,14 +3276,27 @@
                 screenHtml=`<div class="precheck-screens"><span class="lbl">📱 화면 진행 (${p.screen_flow.length})</span>${chips}</div>`;
             }
             const flowBtn = (p.screen_flow && p.screen_flow.length)
-                ? `<button onclick='openScreenFlowModal(_lastPrecheck.screen_flow, "📱 이 콜의 화면 진행 흐름")'><i class="fas fa-images"></i> 화면 흐름 전체 보기</button>` : '';
+                ? `<button onclick='openScreenFlowModal(_lastPrecheck.screen_flow, "📱 이 콜의 화면 진행 흐름")'><i class="fas fa-images"></i> 화면 흐름 전체 보기 (${p.screen_flow.length})</button>` : '';
+            // 보이는ARS 인데 화면이 하나도 안 잡힌 경우 — 원인을 알 수 있게 알려 준다
+            const wvWarn = (p.is_webvoice && !(p.screen_flow && p.screen_flow.length))
+                ? `<div class="precheck-screens"><span class="lbl">📱 화면 진행</span><span style="color:#b7791f;font-size:12px;">이 콜의 로그에서 화면 전송 기록을 찾지 못했습니다 (화면 전송 구간이 수집 범위 밖일 수 있음)</span></div>` : '';
+            // 업무 FLOW 뷰어 — 시작 단계 / 종료 단계 중 어디부터 볼지 고른다
+            const sp = p.start_point || {}, ep = p.end_point || {};
+            const topoLinks = [];
+            if (p.topology_link_start && sp.block)
+                topoLinks.push(`<a href="${p.topology_link_start}" target="_blank" title="${esc((sp.business||sp.scenario||'')+' / 블록 '+(sp.block||''))}"><i class="fas fa-play"></i> 시작 단계부터 보기</a>`);
+            if (p.topology_link && ep.block)
+                topoLinks.push(`<a href="${p.topology_link}" target="_blank" title="${esc((ep.business||ep.scenario||'')+' / 블록 '+(ep.block||''))}"><i class="fas fa-flag-checkered"></i> 종료(중단) 단계 보기</a>`);
+            if (!topoLinks.length)
+                topoLinks.push(`<a href="${p.topology_link||'/topology'}" target="_blank"><i class="fas fa-sitemap"></i> 전체 FLOW 뷰어에서 보기 →</a>`);
             return `<div class="precheck-card ${abnormal?'abnormal':'normal'}">
                 <div class="precheck-head"><span class="precheck-badge ${badgeCls}">${esc(p.end_type)}</span>${chanBadge}<span style="font-size:11px;color:#adb5bd;">사전 노티</span></div>
                 <div class="precheck-interp">🧭 ${esc(p.interpretation)}</div>
-                ${rangeHtml}${screenHtml}
+                ${rangeHtml}${screenHtml}${wvWarn}
                 <div class="precheck-actions">
                     ${flowBtn}
-                    <a href="${p.topology_link||'/topology'}" target="_blank"><i class="fas fa-sitemap"></i> 전체 FLOW 뷰어에서 보기 →</a>
+                    <span class="precheck-topo"><i class="fas fa-sitemap"></i> 업무 FLOW 뷰어</span>
+                    ${topoLinks.join('')}
                 </div>
             </div>`;
         }
@@ -3280,12 +3304,23 @@
         /* 로그 세그먼트(dxml)에 '화면으로 보기' 버튼:
            사전노티 화면흐름과 dxml 을 연결해, 해당 구간에서 나간 화면을 보여준다. */
         function _segScreenBtn(seg) {
-            if (!_lastPrecheck || !_lastPrecheck.screen_flow || !_lastPrecheck.screen_flow.length) return '';
-            // 이 세그먼트(dxml)에서 전송된 화면만 매칭 (payload/scn 정보가 있으면 정밀, 없으면 전체 흐름)
-            const scns = _lastPrecheck.screen_flow.filter(s => !s.scn || s.scn.replace(/\.(dxml|xml)$/i,'') === (seg.dxml||'').replace(/\.(dxml|xml)$/i,''));
-            const target = scns.length ? scns : _lastPrecheck.screen_flow;
+            const all = (_lastPrecheck && _lastPrecheck.screen_flow) || [];
+            if (!all.length) return '';
+            const stem = v => (v||'').replace(/\.(dxml|xml)$/i,'');
+            const segName = stem(seg.dxml);
+            // 이 구간에서 실제로 나간 화면만 고른다.
+            //  1) 화면에 시나리오명이 있으면 그걸로
+            //  2) 없으면 구간의 시각 범위로
+            // 예전에는 둘 다 실패하면 '전체 화면 흐름'을 보여 줬는데, 그러면
+            // 모든 구간이 똑같은 첫 화면을 되풀이해 보여 주게 된다.
+            const byScn = s => s.scn && stem(s.scn) === segName;
+            const inRange = s => s.ts && seg.ts0 && seg.ts1
+                                 && s.ts >= seg.ts0 && s.ts <= seg.ts1;
+            const target = all.filter(s => byScn(s) || inRange(s));
+            if (!target.length) return '';
             const json = JSON.stringify(target).replace(/'/g,'&#39;');
-            return `<span class="seg-screen-btn" title="이 구간의 보이는ARS 화면" onclick='event.preventDefault();event.stopPropagation();openScreenFlowModal(${json}, "📱 " + ${JSON.stringify((seg.dxml||"").replace(/\.(dxml|xml)$/i,""))} + " 화면")'>📱 화면으로 보기</span>`;
+            const ttl = JSON.stringify('📱 ' + (segName || '이 구간') + ' 화면');
+            return `<span class="seg-screen-btn" title="이 구간에서 전송된 보이는ARS 화면" onclick='event.preventDefault();event.stopPropagation();openScreenFlowModal(${json}, ${ttl})'>📱 화면 ${target.length}</span>`;
         }
 
     </script>

@@ -47,16 +47,25 @@ _DTMF = re.compile(r'\[GETDIGIT\]\s+Inputdigit\s*=\s*(?P<d>[\dA-D\*#]+)')
 # 파라미터 없는 화면(S$HLIA01)도 잡도록 구분자 이후는 선택.
 # 구분자는 ';' 과 ':' 이 섞여 쓰인다 (S$HLIB10;TIT$…</font>:TXT$0$L$…).
 # ';' 만 허용하면 ':' 로 이어지는 화면을 통째로 놓친다.
+# 화면코드는 사이트마다 다르다(HLI… 외의 접두사도 쓴다). 접두사를 고정하면
+# 그 사이트 로그에서는 화면이 하나도 안 잡혀, 보이는ARS 인데도 '화면 진행'이
+# 통째로 비고 '화면으로 보기'는 맨 처음 잡힌 화면만 되풀이해서 보여 준다.
+_SCR_CODE = r'[A-Z][A-Z0-9_]{2,19}'
+_SEND_FN = (r'szSendMenuData|SendMenuData|szSendData|SendData|'
+            r'WV_SendMenu|WV_SENDMENU|SendMenu|szSendMenu')
 _SCREEN_FULL = re.compile(
-    r'(?:szSendMenuData|SendData)\(\s*(?P<payload>S\$(?P<scr>HLI[A-Z0-9]+)(?:[;:].*)?)\)')
-_SCREEN = re.compile(r'WV_SENDMENU.*?S\$(?P<scr>HLI[A-Z0-9]+)')
+    r'(?:' + _SEND_FN + r')\s*\(\s*[\'"]?'
+    r'(?P<payload>S\$(?P<scr>' + _SCR_CODE + r')(?:[;:].*)?)\)')
+# 함수 호출 형태가 아니거나 줄이 잘린 경우의 마지막 수단
+_SCREEN = re.compile(r'(?:' + _SEND_FN + r'|WV_SEND)[^\n]*?S\$(?P<scr>'
+                     + _SCR_CODE + r')')
 _SCN_ANY = re.compile(r'\[(?P<scn>[가-힣A-Za-z0-9_]+\.d?xml)\]')
 _TERM = re.compile(r'TERM REASON ==>\s*(?P<r>TM_\w+)')
 # SendData 는 payload 를 ':' 로 이어 2번 이상 반복해 보낸다.
 # 두 번째 사본부터는 다음 화면 데이터이므로 첫 사본만 남긴다.
 # (코드가 같은 경우만 잘라내면 ':S$HLIB00' 처럼 다른 코드로 이어진 잔여물이
 #  남아 화면에 'S$HLI…' 가 그대로 노출되고, 다음 화면의 메뉴까지 섞여 들어온다)
-_SCR_DUP = re.compile(r':S\$HLI[A-Z0-9]+')
+_SCR_DUP = re.compile(r':S\$' + _SCR_CODE)
 
 # 세그먼트 구분자: ';' 또는 ':' 이지만, 바로 뒤에 'KEY$' 가 오는 경우만.
 # 텍스트 값에 CSS 가 들어와 ("font-size: 22px; color: #FF6600") 단순 split(';')
@@ -312,6 +321,24 @@ def _fmt_loc(loc):
     return " › ".join(parts[:4]) if parts else None
 
 
+def _topo_link(env, focus, other, at="end"):
+    """업무 FLOW 뷰어 딥링크.
+
+    시작/종료 두 지점을 모두 실어 보내면, 뷰어에서 '시작 단계 / 종료 단계'를
+    눌러 같은 트리 안에서 오갈 수 있다.
+    """
+    if not focus:
+        return "/topology"
+    from urllib.parse import urlencode
+    q = {"env": env or "", "page": focus["scenario"] or "",
+         "block": focus["block"] or "", "at": at, "view": "detail"}
+    if other:
+        q["other_page"] = other["scenario"] or ""
+        q["other_block"] = other["block"] or ""
+        q["other_at"] = "start" if at == "end" else "end"
+    return "/topology?" + urlencode({k: v for k, v in q.items() if v})
+
+
 def _build_precheck(ars_lines, env, folder=None, call_meta=None):
     call_meta = call_meta or {}
     parsed = _parse_ars_lines(ars_lines)
@@ -322,10 +349,13 @@ def _build_precheck(ars_lines, env, folder=None, call_meta=None):
         folder = os.path.join(base, env) if base else None
 
     first_loc = last_loc = None
-    last_info = None
+    first_info = last_info = None
     if steps:
         f_scn, f_seq = steps[0]
-        first_loc, _ = _locate(f_seq, f_scn, folder)
+        first_loc, fsrc = _locate(f_seq, f_scn, folder)
+        first_info = {"scenario": f_scn, "block": f_seq,
+                      "block_name": next((f["name"] for f in flow
+                                          if f["block"] == f_seq), ""), "source": fsrc}
         l_scn, l_seq = steps[-1]
         last_loc, src = _locate(l_seq, l_scn, folder)
         last_info = {"scenario": l_scn, "block": l_seq,
@@ -380,8 +410,13 @@ def _build_precheck(ars_lines, env, folder=None, call_meta=None):
             "source": last_info["source"] if last_info else None},
         "screen_flow": screen_flow, "last_screen": last_screen,
         "dtmf": parsed["dtmf"], "interpretation": interpretation,
-        "topology_link": (f"/topology?env={env}&highlight={last_info['block']}"
-                          if last_info else "/topology"),
+        "start_point": {
+            "scenario": first_info["scenario"] if first_info else None,
+            "block": first_info["block"] if first_info else None,
+            "block_name": first_info["block_name"] if first_info else None,
+            "business": _fmt_loc(first_loc)},
+        "topology_link": _topo_link(env, last_info, first_info, at="end"),
+        "topology_link_start": _topo_link(env, first_info, last_info, at="start"),
         "service_flow": svc_flow,
         "flow_summary": flow_summary,
     }
