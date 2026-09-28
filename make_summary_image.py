@@ -167,10 +167,11 @@ QUAL = [
         "chip": "중단 시점 요약 → 이상 징후 자동 탐지",
     },
     {
-        "icon": "share", "title": "활용 범위 확장",
-        "desc": ["운영 담당자 외 현업 · 프로젝트 인력에게",
-                 "업무 흐름 · 서비스 구성도 제공"],
-        "chip": "담당자 전용 → 업무 공용 도구",
+        "icon": "share", "title": "프로젝트 업무까지 활용 확장",
+        "desc": ["신계약 프로젝트 인력이 기존 ARS의",
+                 "업무 흐름 · 서비스 구성도를 직접 조회"],
+        "note": "※ 신계약 프로젝트 인력 2명 서비스 제공 중",
+        "chip": "운영 전용 → 프로젝트 공동 활용",
     },
 ]
 
@@ -700,31 +701,32 @@ def build_effect():
                    fill=N["mute"], anchor="end"))
 
     # ── 정성 (흰 바탕, 테두리 없는 3단) ──────────────────────────────
-    g.append(R(M, 568, 24, 3, r=1.5, fill=N["teal_dk"]))
-    g.append(T(M + 36, 576, QUAL_LABEL, size=14, weight="700",
+    g.append(R(M, 556, 24, 3, r=1.5, fill=N["teal_dk"]))
+    g.append(T(M + 36, 564, QUAL_LABEL, size=14, weight="700",
                fill=N["teal_dk"], spacing="2"))
-    g.append(T(M + 36 + est_w(QUAL_LABEL, 14) + 30, 576, QUAL_CAPTION,
+    g.append(T(M + 36 + est_w(QUAL_LABEL, 14) + 30, 564, QUAL_CAPTION,
                size=13.5, fill=N["mute"]))
 
     gap = 40
     cw = (W - 2 * M - gap * 2) / 3
-    y0 = 604
+    y0 = 592
     for i, q in enumerate(QUAL):
         x = M + i * (cw + gap)
         if i:
             dx = x - gap / 2
-            g.append(f'<path d="M {dx},{y0 - 8} L {dx},{y0 + 220}" '
+            g.append(f'<path d="M {dx},{y0 - 8} L {dx},{y0 + 236}" '
                      f'stroke="{N["line"]}" stroke-width="1"/>')
-        g.append(f'<circle cx="{x + 30}" cy="{y0 + 30}" r="27" '
+        g.append(f'<circle cx="{x + 28}" cy="{y0 + 28}" r="26" '
                  f'fill="{N["teal_soft"]}"/>')
-        g.append(icon(q.get("icon", ""), x + 30, y0 + 30, 26,
+        g.append(icon(q.get("icon", ""), x + 28, y0 + 28, 26,
                       N["teal_dk"], sw=1.7))
-        g.append(T(x, y0 + 94, q["title"], size=20, weight="700",
+        g.append(T(x, y0 + 88, q["title"], size=20, weight="700",
                    fill=N["ink"]))
-        g.append(R(x, y0 + 112, 40, 3, r=1.5, fill=N["teal_dk"]))
+        g.append(R(x, y0 + 104, 40, 3, r=1.5, fill=N["teal_dk"]))
         for j, ln in enumerate(q["desc"]):
-            g.append(T(x, y0 + 148 + j * 24, ln, size=15, fill=N["sub"]))
-        g.append(T(x, y0 + 210, q.get("chip", ""), size=15, weight="700",
+            g.append(T(x, y0 + 138 + j * 24, ln, size=15, fill=N["sub"]))
+        g.append(T(x, y0 + 188, q.get("note", ""), size=12.5, fill=N["mute"]))
+        g.append(T(x, y0 + 224, q.get("chip", ""), size=15, weight="700",
                    fill=N["teal_dk"]))
 
     g.append(T(M, 856, E_FOOTER_L, size=13, fill=N["mute"]))
