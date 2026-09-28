@@ -462,11 +462,37 @@ async function init(){
   await pickEnv(want);
   if(DEEP){ renderDeepBar(); await applyDeep(); }
 }
+/* 구성도 준비(캐시 생성) 상태 표시 —
+   시나리오 파일을 새로 덮어쓰면 전부 다시 읽으므로 첫 조회가 오래 걸린다.
+   멈춘 것처럼 보이지 않도록 진행 상황을 보여 주고, 끝나면 다시 불러온다. */
+let WARM_T=null;
+function warmMsg(st){
+  const pct=st.total?Math.floor(st.done*100/st.total):0;
+  return `<div class="empty" style="height:auto;padding:26px;line-height:1.9">
+    <div style="font-size:14px;color:#d9660a;font-weight:600">구성도 준비 중… ${pct}%</div>
+    <div style="font-size:12px;color:#718096">${esc(st.env||'')} ${st.total?`(${st.done}/${st.total})`:''} ${esc(st.entry||'')}</div>
+    <div style="font-size:12px;color:#a0aec0">시나리오 파일이 바뀌면 처음 한 번은 전체를 다시 읽습니다.<br>
+      경과 ${st.elapsed||0}초 · 끝나면 자동으로 표시됩니다.</div></div>`;
+}
+async function watchWarm(env){
+  clearTimeout(WARM_T);
+  let st=null;
+  try{ st=await j('/api/topology/warm'); }catch(e){ return false; }
+  if(!st || st.state!=='warming') return false;
+  document.getElementById('tree').innerHTML=warmMsg(st);
+  WARM_T=setTimeout(async()=>{
+    const again=await watchWarm(env);
+    if(!again) pickEnv(env);      // 준비가 끝나면 트리를 다시 불러온다
+  }, 2000);
+  return true;
+}
+
 async function pickEnv(env,btn){
   ENV=env; window.TOPO_ENV=env;
   if(btn){document.querySelectorAll('#envSeg button').forEach(b=>b.classList.remove('on'));btn.classList.add('on');}
   const tw=document.getElementById('tree');
   tw.innerHTML='<div class="empty" style="height:auto;padding:30px">메뉴 트리 로딩…</div>';
+  if(await watchWarm(env)) return;
   const r=await j('/api/topology/menuroots?env='+enc(env));
   const roots=r.roots||[];
   if(!roots.length){tw.innerHTML='<div class="empty" style="height:auto;padding:30px">메뉴 진입점 없음</div>';return;}

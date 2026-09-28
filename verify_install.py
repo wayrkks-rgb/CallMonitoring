@@ -105,6 +105,14 @@ CHECKS = [
      "DIFF 에서 변경 블록을 FLOW 뷰어로 연결"),
     ("scenario_deploy.py", '"viewer_env": cfg.get("viewer_env")',
      "DIFF 리포트에 뷰어 환경 이름 포함 — 없으면 FLOW 링크가 안 생긴다"),
+    ("scenario_boot.py", "구성도 준비 시작",
+     "구성도 준비 진행 로그 — 없으면 멈춘 건지 만드는 중인지 알 수 없다"),
+    ("scenario_boot.py", "_keylock",
+     "같은 구성도를 동시에 두 번 만들지 않도록 — 없으면 첫 로딩이 두 배로 걸린다"),
+    ("routes/topology.py", "api_warm",
+     "구성도 준비 상태 API (/api/topology/warm)"),
+    ("templates/topology.html", "warmMsg",
+     "FLOW 뷰어에 '구성도 준비 중 %' 표시 + 완료 시 자동 갱신"),
 ]
 
 
