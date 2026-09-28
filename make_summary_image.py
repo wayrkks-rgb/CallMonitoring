@@ -148,9 +148,9 @@ QUANT = [
     },
     {
         "no": "③", "title": "시나리오 사전 검증 전후 재배포 비율",
-        "before": "20%", "after": "0%", "gain": "재배포 0건",
-        "note": "※ '26년 SR 20건 중 5건 재배포 → 사전 검증 적용('26.9) 후 "
-                "SR 5건 중 0건",
+        "before": "25%", "after": "0%", "gain": "재배포 0건",
+        "note": "※ 적용 전(~'26.08) SR 20건 중 5건 재배포 → "
+                "적용 후('26.09) SR 5건 중 0건",
     },
 ]
 
@@ -254,37 +254,39 @@ TOBE_LABEL, TOBE_SUB = "개선 후", "TO-BE"
 ASIS = [
     {"icon": "edit", "title": "시나리오 디자이너 수정",
      "body": ["ARS 소스(XML) 직접 수정",
-              "*SR 여러 건이 같은 시나리오에 몰림"], "tag": ""},
+              "*SR 여러 건이 같은 시나리오에 몰림"],
+     "metric": "", "unit": ""},
     {"icon": "manual", "title": "함수 단위 육안 대조",
      "body": ["운영본과 수정본을 나란히 열어",
-              "*블록 내 함수 · 변수를 하나씩 대조",
-              "연관 시나리오는 따로 찾아 확인"], "tag": "건당 60분"},
+              "*블록 내 함수 · 변수를 하나씩 대조"],
+     "metric": "60분", "unit": "건당"},
     {"icon": "deploy", "title": "소스 혼재 위험 감수",
-     "body": ["SR 이 겹치면 수정분이 서로 섞임",
-              "*제외 대상 포함 · 수정분 누락 발생",
-              "반영 후 운영 검증에서야 확인"], "tag": "3분기 재배포 4건"},
+     "body": ["*제외 대상 포함 · 수정분 누락 발생",
+              "반영 후 운영 검증에서야 확인"],
+     "metric": "25%", "unit": "재배포"},
     {"icon": "manual", "title": "전체 로그 직접 분석",
      "body": ["고객 정보로 전체 로그 조회",
-              "*수백 줄을 처음부터 확인",
-              "중단 지점 직접 판단"], "tag": "건당 30분"},
+              "*수백 줄을 처음부터 확인"],
+     "metric": "30분", "unit": "건당"},
 ]
 
 TOBE = [
     {"icon": "edit", "title": "시나리오 디자이너 수정",
      "body": ["ARS 소스(XML) 직접 수정",
-              "*저장 시 비교 대상 자동 등록"], "tag": ""},
+              "*저장 시 비교 대상 자동 등록"],
+     "metric": "", "unit": "", "delta": ""},
     {"icon": "diff", "title": "변경 내용 자동 비교",
-     "body": ["운영본과 수정본 전체 자동 비교",
-              "*변경 블록 · 함수 · 변수만 추출",
-              "연관 시나리오까지 한 번에 확인"], "tag": "건당 10분"},
+     "body": ["*변경 블록 · 함수 · 변수만 추출",
+              "연관 시나리오까지 한 번에 확인"],
+     "metric": "10분", "unit": "건당", "delta": "50분 단축"},
     {"icon": "shield", "title": "운영 배포 전 사전 검증",
-     "body": ["SR 간 중복 변경 여부 확인",
-              "*제외 대상 · 누락분 배포 전 식별",
-              "확인 후 운영 반영"], "tag": "9월 재배포 0건"},
+     "body": ["*제외 대상 · 누락분 배포 전 식별",
+              "확인 후 운영 반영"],
+     "metric": "0%", "unit": "재배포", "delta": "재배포 0건"},
     {"icon": "breakpoint", "title": "통화 흐름 요약 우선 제시",
-     "body": ["통화 흐름 요약을 먼저 표시",
-              "*중단 지점 · 종료 사유 즉시 제시",
-              "해당 구간만 확인"], "tag": "건당 5분"},
+     "body": ["*중단 지점 · 종료 사유 즉시 제시",
+              "해당 구간만 확인"],
+     "metric": "5분", "unit": "건당", "delta": "25분 단축"},
 ]
 
 ASIS_RESULT = "SR 이 겹칠수록 확인량이 늘고, 놓친 변경은 운영 반영 후에야 드러남"
@@ -933,44 +935,53 @@ def build_roadmap():
 
 
 def build_flow():
-    """개선 전 · 후 업무 흐름 장표 — 같은 단계끼리 위아래로 맞춰 비교."""
+    """개선 전 · 후 업무 흐름 — 같은 단계를 위아래로 세우고 수치를 마주 보게 둔다."""
     g = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
          f'viewBox="0 0 {W} {H}">',
          R(0, 0, W, H, r=0, fill=N["page"])]
 
     # ── 머리글 ───────────────────────────────────────────────────────
-    g.append(R(0, 0, W, 118, r=0, fill=N["navy"]))
-    g.append(T(M, 62, F_TITLE, size=30, weight="700", fill=N["on_navy"],
+    g.append(R(0, 0, W, 110, r=0, fill=N["navy"]))
+    g.append(T(M, 58, F_TITLE, size=30, weight="700", fill=N["on_navy"],
                ghost=N["ghost_navy"]))
-    g.append(T(M, 90, F_SUBTITLE, size=14, fill=N["on_navy_sub"],
+    g.append(T(M, 86, F_SUBTITLE, size=14, fill=N["on_navy_sub"],
                ghost=N["ghost_navy"]))
-    g.append(T(W - M, 76, F_META, size=13, fill=N["teal"], anchor="end",
+    g.append(T(W - M, 72, F_META, size=13, fill=N["teal"], anchor="end",
                ghost=N["ghost_navy"]))
 
     cx0 = M + 108                                 # 왼쪽은 흐름 이름 자리
-    tw = W - M - cx0                              # 단계가 놓이는 폭
-    gap = 44
+    tw = W - M - cx0
+    gap = 40
     n = len(PHASES)
     cw = (tw - gap * (n - 1)) / n
+    colx = lambda i: cx0 + i * (cw + gap)
+    colc = lambda i: colx(i) + cw / 2
 
-    # ── 단계 이름 ────────────────────────────────────────────────────
-    for i, ph in enumerate(PHASES):
-        x = cx0 + i * (cw + gap)
-        pw = 28 + est_w(ph, 13.5)
-        g.append(R(x + cw / 2 - pw / 2, 148, pw, 30, r=15,
-                   fill=N["soft"], stroke=N["line"], sw=1))
-        g.append(T(x + cw / 2, 168, ph, size=13.5, weight="700",
-                   fill=N["sub"], anchor="middle"))
+    # ── 단계 띠 : 업무가 흘러가는 방향을 한 줄로 ─────────────────────
+    py, ph = 134, 44
+    g.append(R(M, py, W - 2 * M, ph, r=10, fill=N["soft"], stroke=N["line"]))
+    g.append(TC(M + 54, py + ph / 2, "업무 흐름", size=12.5, weight="700",
+                fill=N["mute"], spacing="1"))
+    for i, phs in enumerate(PHASES):
+        g.append(f'<circle cx="{colx(i) + 14}" cy="{py + ph / 2}" r="10.5" '
+                 f'fill="{N["navy"]}"/>')
+        g.append(TC(colx(i) + 14, py + ph / 2, str(i + 1), size=11.5,
+                    weight="700", fill="#FFFFFF", keep=True))
+        g.append(TC(colx(i) + 32, py + ph / 2, phs, size=15, weight="700",
+                    fill=N["ink"], anchor="start"))
+        if i < n - 1:
+            g.append(arrow_right(colx(i) + cw + gap / 2, py + ph / 2, N["mute"]))
+
+    bh = 168
 
     def lane(steps, y, label, sub, tobe):
-        bh = 176
         acc = N["teal_dk"] if tobe else N["amber"]
-        g.append(T(M, y + 74, label, size=19, weight="700",
-                   fill=N["teal_dk"] if tobe else N["mute"]))
-        g.append(T(M, y + 96, sub, size=12, weight="700", fill=N["mute"],
+        g.append(T(M, y + 72, label, size=20, weight="700",
+                   fill=acc if tobe else N["sub"]))
+        g.append(T(M, y + 94, sub, size=12, weight="700", fill=N["mute"],
                    spacing="1"))
         for i, st in enumerate(steps):
-            x = cx0 + i * (cw + gap)
+            x = colx(i)
             if tobe:
                 g.append(R(x, y, cw, bh, r=12, fill=N["page"],
                            stroke=N["teal_line"], sw=1.8))
@@ -985,56 +996,68 @@ def build_flow():
                      f'stroke="{N["line"]}" stroke-width="1"/>')
             for j, ln in enumerate(st["body"]):
                 hi = ln.startswith("*")
-                g.append(T(x + 20, y + 90 + j * 22, ln[1:] if hi else ln,
+                g.append(T(x + 20, y + 88 + j * 22, ln[1:] if hi else ln,
                            size=13.5, weight="700" if hi else "400",
                            fill=acc if hi else N["sub"]))
-            # 단계별 부담/성과는 오른쪽 아래 꼬리표로. 이 줄만 훑어도 대비가 보인다
-            lab = st.get("tag", "")
-            if lab:
-                g.append(tag(x + cw - 16, y + bh - 36, lab, acc,
-                             N["teal_soft"] if tobe else N["amber_soft"],
-                             N["teal_line"] if tobe else N["amber_line"]))
-            if i < n - 1:
-                g.append(arrow_right(x + cw + gap / 2, y + bh / 2, acc))
+            # 단계별 수치 — 위아래가 마주 보도록 같은 자리에 크게
+            mv = st.get("metric", "")
+            if mv:
+                g.append(T(x + cw - 20, y + bh - 22, mv, size=32, weight="800",
+                           fill=acc, anchor="end"))
+                g.append(T(x + cw - 20 - est_w(mv, 32) - 10, y + bh - 24,
+                           st.get("unit", ""), size=12, weight="700",
+                           fill=N["mute"], anchor="end"))
         return y + bh
 
     def result(y, text, tobe):
-        g.append(R(cx0, y, tw, 44, r=10,
+        g.append(R(cx0, y, tw, 42, r=10,
                    fill=N["teal_soft"] if tobe else N["amber_soft"],
                    stroke=N["teal_line"] if tobe else N["amber_line"], sw=1))
-        g.append(TC(cx0 + 20, y + 22, ("▶  " if tobe else "!  ") + text,
+        g.append(TC(cx0 + 20, y + 21, ("▶  " if tobe else "!  ") + text,
                     size=14, weight="700", anchor="start",
                     fill=N["teal_dk"] if tobe else N["amber"]))
 
     # ── 개선 전 ──────────────────────────────────────────────────────
-    y1 = 202
+    y1 = 194
     lane(ASIS, y1, ASIS_LABEL, ASIS_SUB, False)
-    result(y1 + 192, ASIS_RESULT, False)
+    result(y1 + bh + 8, ASIS_RESULT, False)
 
-    # ── 두 흐름 사이 구분 ────────────────────────────────────────────
-    my = 470
-    g.append(f'<path d="M {M},{my} L {W - M},{my}" stroke="{N["teal_line"]}" '
-             f'stroke-width="1.4" stroke-dasharray="5 6"/>')
-    pw = 28 + est_w("개선 적용", 13.5)
-    g.append(R(W / 2 - pw / 2, my - 15, pw, 30, r=15, fill=N["teal_dk"]))
-    g.append(T(W / 2, my + 5, "개선 적용", size=13.5, weight="700",
-               fill="#FFFFFF", anchor="middle"))
+    # ── 개선 폭 : 열마다 아래로 꽂히는 화살표 ────────────────────────
+    dy = y1 + bh + 58
+    g.append(TC(M + 54, dy + 22, "개선 효과", size=12.5, weight="700",
+                fill=N["teal_dk"], spacing="1"))
+    for i, st in enumerate(TOBE):
+        d = st.get("delta", "")
+        cx = colc(i)
+        col = N["teal_dk"] if d else N["line"]
+        dash = "" if d else ' stroke-dasharray="4 5"'
+        g.append(f'<path d="M {cx},{dy} L {cx},{dy + 26}" stroke="{col}" '
+                 f'stroke-width="{3 if d else 1.6}" stroke-linecap="round"'
+                 f'{dash}/>')
+        g.append(f'<path d="M {cx - 9},{dy + 22} L {cx},{dy + 34} '
+                 f'L {cx + 9},{dy + 22} Z" fill="{col}"/>')
+        if d:
+            dw = 26 + est_w(d, 13.5)
+            g.append(R(cx - dw / 2, dy + 40, dw, 30, r=15,
+                       fill=N["teal_dk"]))
+            g.append(TC(cx, dy + 55, d, size=13.5, weight="700",
+                        fill="#FFFFFF"))
 
     # ── 개선 후 ──────────────────────────────────────────────────────
-    y2 = 502
+    y2 = dy + 84
     lane(TOBE, y2, TOBE_LABEL, TOBE_SUB, True)
-    result(y2 + 192, TOBE_RESULT, True)
+    result(y2 + bh + 8, TOBE_RESULT, True)
 
     # ── 핵심 한 줄 ───────────────────────────────────────────────────
-    ny = 790
-    g.append(R(M, ny, W - 2 * M, 48, r=10, fill=N["soft"],
+    ny = y2 + bh + 88
+    g.append(R(M, ny, W - 2 * M, 46, r=10, fill=N["soft"],
                stroke=N["line"], sw=1))
-    g.append(icon("shield", M + 30, ny + 24, 20, N["teal_dk"], sw=1.7))
-    g.append(TC(M + 54, ny + 24, F_NOTE, size=14, weight="700", fill=N["ink"],
+    g.append(icon("shield", M + 30, ny + 23, 20, N["teal_dk"], sw=1.7))
+    g.append(TC(M + 54, ny + 23, F_NOTE, size=14, weight="700", fill=N["ink"],
                 anchor="start"))
 
-    g.append(T(M, 868, F_FOOTER_L, size=12.5, fill=N["mute"]))
-    g.append(T(W - M, 868, F_FOOTER_R, size=12.5, fill=N["mute"],
+    g.append(T(M, 872, F_FOOTER_L, size=12.5, fill=N["mute"]))
+    g.append(T(W - M, 872, F_FOOTER_R, size=12.5, fill=N["mute"],
                anchor="end"))
 
     g.append('</svg>')
