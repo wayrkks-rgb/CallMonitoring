@@ -64,7 +64,7 @@ IMPROVEMENTS = [
         "span": (0, 1), "accent": True, "icon": "diff",
         "title": "① 배포 전 변경 내용 자동 비교",
         "desc": "블록 · 변수 · 메뉴 버튼 단위 비교 + 변경된 업무 위치까지 표시",
-        "tag": "잘못된 배포 차단",
+        "tag": "60분 → 10분",
     },
     {
         "span": (2, 2), "accent": False, "icon": "collect",
@@ -76,7 +76,7 @@ IMPROVEMENTS = [
         "span": (3, 3), "accent": True, "icon": "breakpoint",
         "title": "② 중단 지점 자동 제시",
         "desc": "마지막 진행 지점 · 종료 사유",
-        "tag": "원인 확인 단축",
+        "tag": "30분 → 5분",
     },
 ]
 
@@ -84,8 +84,9 @@ IMPROVEMENTS = [
 BASE_BAND = {
     "icon": "tree",
     "title": "③ 업무 구조 E2E",
-    "desc": "블록 번호를 업무 위치(메뉴 경로 · STEP)로 환산하여 전체 흐름 제공",
-    "note": "① · ② 에 공통 적용",
+    "desc": "블록 번호를 업무 위치로 환산 · 전체 트리와 업무 요약을 PDF 일괄 제공"
+            " — ① · ② 의 공통 기반",
+    "note": "60분 → 5분",
 }
 
 # 아래 패널 : 개선 효과 (현황 → 개선 → 효과)
@@ -112,7 +113,7 @@ CARDS = [
         "icon": "tree",
         "title": ["업무 구조 E2E", "화면 제공"],
         "before": ["시나리오 디자이너로 블록 단위만", "열람, 업무 간 연관성 확인 불가"],
-        "after": ["전체 흐름을 메뉴 경로 · STEP 으로", "펼쳐 업무 연관성 확인"],
+        "after": ["전체 트리 구조와 업무 요약을", "한 번에 조회 · PDF 일괄 제공"],
         "effect": "업무 정보의 담당자 의존도 완화",
     },
 ]
@@ -391,7 +392,7 @@ def build_svg():
     g.append(T(X0 + 52 + est_w(BASE_BAND["title"], 16.5) + 16, by + 29,
                BASE_BAND["desc"], size=14, fill=C["sub"]))
     g.append(tag(X0 + CW - 16, by + 11, BASE_BAND.get("note", ""),
-                 C["blue"], C["panel"], C["blue_line"]))
+                 C["amber"], C["amber_soft"], C["amber_line"]))
 
     # ── 패널 2 : 개선 효과 ───────────────────────────────────────────
     p2y, p2h = 430, 426
