@@ -127,11 +127,11 @@ FOOTER_R = "향후 : 채널 상태 기반 자동 알림 · 배포 승인 절차�
 # ─────────────────────────────────────────────────────────────────────────
 
 E_TITLE = "기대효과"
-E_SUBTITLE = "ARS 운영 장애 예방 체계 구축"
+E_SUBTITLE = "확인 시간 10분 이내, 소스 혼재로 인한 배포 오류 0건"
 E_META = "ARS 7대 · AICC/VGW 3대 · 운영 시나리오 전체"
 
 QUANT_LABEL = "정량 효과"
-QUANT_CAPTION = "동일 업무 기준 구축 전후 소요 시간 비교"
+QUANT_CAPTION = "동일 업무 기준 구축 전후 소요 시간 및 적용 실적"
 QUAL_LABEL = "정성 효과"
 QUAL_CAPTION = "수치로 드러나지 않는 운영 방식의 변화"
 
@@ -147,9 +147,9 @@ QUANT = [
         "note": "※ 변경 블록 40개 · 신규 시나리오 2개 추가 기준",
     },
     {
-        "no": "③", "title": "업무 구조 파악 시간",
-        "before": "60분", "after": "5분", "gain": "92% 단축",
-        "note": "※ 신규 업무 1건의 ARS 전체 흐름 파악 기준",
+        "no": "③", "title": "배포 전 변경 비교 적용률",
+        "before": "0%", "after": "100%", "gain": "반영 오류 0건",
+        "note": "※ 9월 반영 SR 5건 전량 적용, 소스 혼재로 인한 반영 오류 없음",
     },
 ]
 
@@ -300,10 +300,24 @@ def esc(s):
 
 
 def est_w(s, size):
-    """글자 폭 어림값. 한글·전각은 1.0em, 나머지는 0.52em 로 본다."""
+    """글자 폭 어림값.
+
+    숫자와 % 를 다른 글자와 같은 폭으로 잡으면 '100%' 같은 큰 수치에서
+    폭이 모자라 화살표와 겹친다. 글자 종류별로 나눠서 본다.
+    """
     w = 0.0
     for ch in s:
-        w += size * (1.0 if ord(ch) > 0x2000 else 0.52)
+        if ord(ch) > 0x2000:            # 한글·전각 기호
+            k = 1.0
+        elif ch == "%":
+            k = 0.90
+        elif ch.isdigit():
+            k = 0.58
+        elif ch.isupper():
+            k = 0.64
+        else:
+            k = 0.52
+        w += size * k
     return w
 
 
@@ -668,7 +682,8 @@ def build_effect():
                    fill=N["ink"]))
         g.append(T(ix + 52, ry + 70, q["note"], size=12.5, fill=N["mute"]))
 
-        gw = 132
+        # 배지 폭은 글자에 맞춰 늘린다 ('반영 오류 0건' 처럼 긴 문구 대비)
+        gw = max(132, est_w(q["gain"], 14.5) + 30)
         gx = W - M - 28 - gw
         g.append(R(gx, ry + 35, gw, 34, r=17, fill=N["teal_soft"],
                    stroke=N["teal_line"], sw=1))
