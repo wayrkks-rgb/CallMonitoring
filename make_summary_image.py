@@ -249,36 +249,45 @@ PHASES = ["소스 수정", "변경 검증", "운영 반영", "장애 · 문의 �
 ASIS_LABEL, ASIS_SUB = "개선 전", "AS-IS"
 TOBE_LABEL, TOBE_SUB = "개선 후", "TO-BE"
 
+#  본문 줄 앞에 * 를 붙이면 강조(굵게 + 강조색)로 그려진다
 ASIS = [
     {"icon": "edit", "title": "시나리오 디자이너 수정",
-     "body": ["ARS 소스(XML) 직접 수정"], "tag": ""},
-    {"icon": "manual", "title": "함수 단위 육안 확인",
-     "body": ["수정한 시나리오를 열어", "블록 내 함수를 하나씩 대조",
-              "변경 · 영향 범위 확인 불가"], "tag": "건당 60분"},
-    {"icon": "deploy", "title": "소스 적용 후 운영 검증",
-     "body": ["운영 반영 후 실제 통화로 확인", "오류 발견 시 수정 · 재배포"],
-     "tag": "3분기 재배포 4건"},
+     "body": ["ARS 소스(XML) 직접 수정",
+              "*SR 여러 건이 같은 시나리오에 몰림"], "tag": ""},
+    {"icon": "manual", "title": "함수 단위 육안 대조",
+     "body": ["운영본과 수정본을 나란히 열어",
+              "*블록 내 함수 · 변수를 하나씩 대조",
+              "연관 시나리오는 따로 찾아 확인"], "tag": "건당 60분"},
+    {"icon": "deploy", "title": "소스 혼재 위험 감수",
+     "body": ["SR 이 겹치면 수정분이 서로 섞임",
+              "*제외 대상 포함 · 수정분 누락 발생",
+              "반영 후 운영 검증에서야 확인"], "tag": "3분기 재배포 4건"},
     {"icon": "manual", "title": "전체 로그 직접 분석",
-     "body": ["고객 정보로 전체 로그 조회", "처음부터 끝까지 확인",
+     "body": ["고객 정보로 전체 로그 조회",
+              "*수백 줄을 처음부터 확인",
               "중단 지점 직접 판단"], "tag": "건당 30분"},
 ]
 
 TOBE = [
-    {"icon": "edit", "title": "시나리오 디자이너 수정", "same": True,
-     "body": ["ARS 소스(XML) 직접 수정"], "tag": "기존과 동일"},
+    {"icon": "edit", "title": "시나리오 디자이너 수정",
+     "body": ["ARS 소스(XML) 직접 수정",
+              "*저장 시 비교 대상 자동 등록"], "tag": ""},
     {"icon": "diff", "title": "변경 내용 자동 비교",
-     "body": ["저장 시 두 시나리오 자동 비교", "변경 블록 · 함수만 추출",
-              "연관 서비스 영향 범위 표시"], "tag": "건당 10분"},
-    {"icon": "shield", "title": "영향 범위 확인 후 반영",
-     "body": ["변경 내용 · 영향 범위 확인 후 반영",
-              "운영 검증 단계 오류 사전 차단"], "tag": "9월 재배포 0건"},
+     "body": ["운영본과 수정본 전체 자동 비교",
+              "*변경 블록 · 함수 · 변수만 추출",
+              "연관 시나리오까지 한 번에 확인"], "tag": "건당 10분"},
+    {"icon": "shield", "title": "혼재 여부 사전 확인",
+     "body": ["SR 간 중복 변경 여부 확인",
+              "*제외 대상 · 누락분 배포 전 식별",
+              "확인 후 운영 반영"], "tag": "9월 재배포 0건"},
     {"icon": "breakpoint", "title": "통화 흐름 요약 우선 제시",
-     "body": ["통화 흐름 요약을 먼저 표시", "중단 지점 · 종료 사유 제시",
+     "body": ["통화 흐름 요약을 먼저 표시",
+              "*중단 지점 · 종료 사유 즉시 제시",
               "해당 구간만 확인"], "tag": "건당 5분"},
 ]
 
-ASIS_RESULT = "확인 범위가 사람에 따라 달라지고, 놓친 변경은 운영 반영 후에야 드러남"
-TOBE_RESULT = "변경 범위와 영향을 배포 전에 확인, 장애 지점은 로그를 읽기 전에 제시"
+ASIS_RESULT = "SR 이 겹칠수록 확인량이 늘고, 놓친 변경은 운영 반영 후에야 드러남"
+TOBE_RESULT = "변경 · 혼재 여부를 배포 전에 한 번에 확인, 장애 지점은 로그를 읽기 전에 제시"
 
 F_NOTE = ("소스 수정과 운영 반영 절차는 그대로 두고 검증 · 분석 방식만 변경 "
           "— 기존 개발 · 배포 도구 교체 없음")
@@ -954,36 +963,29 @@ def build_flow():
                    spacing="1"))
         for i, st in enumerate(steps):
             x = cx0 + i * (cw + gap)
-            same = st.get("same")
-            if tobe and not same:
+            if tobe:
                 g.append(R(x, y, cw, bh, r=12, fill=N["page"],
                            stroke=N["teal_line"], sw=1.8))
             else:
                 g.append(R(x, y, cw, bh, r=12, fill=N["soft"],
                            stroke=N["line"], sw=1))
-            bar = N["mute"] if same else acc
-            g.append(R(x + 1, y + 16, 4, bh - 32, r=2, fill=bar))
-            ic = N["mute"] if same else acc
-            g.append(icon(st.get("icon", ""), x + 34, y + 36, 24, ic, sw=1.7))
+            g.append(R(x + 1, y + 16, 4, bh - 32, r=2, fill=acc))
+            g.append(icon(st.get("icon", ""), x + 34, y + 36, 24, acc, sw=1.7))
             g.append(T(x + 58, y + 44, st["title"], size=16.5, weight="700",
-                       fill=N["mute"] if same else N["ink"]))
+                       fill=N["ink"]))
             g.append(f'<path d="M {x + 20},{y + 62} L {x + cw - 20},{y + 62}" '
                      f'stroke="{N["line"]}" stroke-width="1"/>')
             for j, ln in enumerate(st["body"]):
-                g.append(T(x + 20, y + 90 + j * 22, ln, size=13.5,
-                           fill=N["mute"] if same else N["sub"]))
+                hi = ln.startswith("*")
+                g.append(T(x + 20, y + 90 + j * 22, ln[1:] if hi else ln,
+                           size=13.5, weight="700" if hi else "400",
+                           fill=acc if hi else N["sub"]))
             # 단계별 부담/성과는 오른쪽 아래 꼬리표로. 이 줄만 훑어도 대비가 보인다
             lab = st.get("tag", "")
             if lab:
-                if same:
-                    g.append(tag(x + cw - 16, y + bh - 36, lab,
-                                 N["mute"], N["soft"], N["line"]))
-                elif tobe:
-                    g.append(tag(x + cw - 16, y + bh - 36, lab,
-                                 N["teal_dk"], N["teal_soft"], N["teal_line"]))
-                else:
-                    g.append(tag(x + cw - 16, y + bh - 36, lab,
-                                 N["amber"], N["amber_soft"], N["amber_line"]))
+                g.append(tag(x + cw - 16, y + bh - 36, lab, acc,
+                             N["teal_soft"] if tobe else N["amber_soft"],
+                             N["teal_line"] if tobe else N["amber_line"]))
             if i < n - 1:
                 g.append(arrow_right(x + cw + gap / 2, y + bh / 2, acc))
         return y + bh
