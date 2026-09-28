@@ -131,32 +131,37 @@ E_SUBTITLE = "ARS 운영 장애 예방 체계 구축"
 E_META = "ARS 7대 · AICC/VGW 3대 · 운영 시나리오 전체"
 
 QUANT_LABEL = "정량 효과"
-QUANT_CAPTION = "동일 업무 기준 구축 전후 소요 시간 및 적용 실적"
+QUANT_CAPTION = "배포 전에 막는 효과와, 장애가 난 뒤 빨리 잡는 효과"
 QUAL_LABEL = "정성 효과"
 QUAL_CAPTION = "수치로 드러나지 않는 운영 방식의 변화"
 
+#  group : 'prevent' = 장애 예방(배포 전) / 'contain' = 장애 확산 방지(발생 후)
+QUANT_GROUPS = {
+    "prevent": ("장애 예방", "배포 전"),
+    "contain": ("확산 방지", "장애 발생 후"),
+}
+
 QUANT = [
     {
-        "no": "①", "title": "장애 로그 분석 시간",
-        "before": "30분", "after": "5분", "gain": "83% 단축",
-        "note": "※ 서버 접속 · 로그 검색 · 중단 지점 확인 기준",
-    },
-    {
-        "no": "②", "title": "배포 전 변경 비교 시간",
+        "group": "prevent", "no": "①", "title": "배포 전 사전 검증 시간",
         "before": "60분", "after": "10분", "gain": "83% 단축",
         "note": "※ 변경 블록 40개 · 신규 시나리오 2개 추가 기준",
     },
     {
-        "no": "③", "title": "오류 소스 운영 반영 비율",
+        "group": "prevent", "no": "②", "title": "오류 소스 운영 반영 비율",
         "before": "25%", "after": "0%", "gain": "재배포 5건 예방",
-        "note": "※ '26년 SR 25건 중 운영 검증 오류 재배포 5건 — "
-                "적용 전(~'26.08) 20건 중 5건 → 적용 후('26.09) 5건 중 0건",
+        "note": "※ '26년 SR 25건 — 적용 전(~'26.08) 20건 중 5건 재배포 → "
+                "적용 후('26.09) 5건 중 0건",
     },
     {
-        "no": "④", "title": "연관 시나리오 영향 사전 식별",
-        "before": "0건", "after": "○건", "gain": "연쇄 오류 예방",
-        "note": "※ 변경 블록을 다른 시나리오가 호출하는 경우 배포 전 자동 표시"
-                " ('26.09 배포 기준)",
+        "group": "contain", "no": "③", "title": "장애 원인 확인 시간",
+        "before": "30분", "after": "5분", "gain": "83% 단축",
+        "note": "※ 서버 접속 · 로그 검색 · 중단 지점 확인 기준",
+    },
+    {
+        "group": "contain", "no": "④", "title": "확인 대상 서버",
+        "before": "10대", "after": "1화면", "gain": "통합 조회",
+        "note": "※ ARS 7대 · AICC/VGW 3대 로그를 한 화면에서 검색",
     },
 ]
 
@@ -182,8 +187,8 @@ QUAL = [
     },
 ]
 
-E_SUMMARY = ("오류 소스 운영 반영 0건 · 연관 영향 배포 전 식별 — "
-             "담당자 경험에 의존하던 판단을 시스템 확인 절차로 전환")
+E_SUMMARY = ("배포 전 오류 소스 차단 25% → 0% · 장애 발생 시 원인 확인 5분 이내 — "
+             "경험 의존 판단을 시스템 확인 절차로 전환")
 E_FOOTER_L = "※ 소요 시간은 동일 업무 기준의 구축 전후 비교값"
 E_FOOTER_R = "향후 : 채널 상태 기반 자동 알림 · 배포 승인 절차와 변경 검증 연계"
 
@@ -318,7 +323,7 @@ C_META = "※ 개선 후 화면은 실제 기능 기준 예시"
 #  기대효과의 세 지표에 맞춰, 서로 다른 결(효율 / 범위 / 안정성)로 나눈다
 CMP = [
     {
-        "no": "1", "kind": "효율", "title": ["시나리오", "검증 시간"],
+        "no": "1", "kind": "장애 예방", "title": ["배포 전", "사전 검증"],
         "desc": ["SR 반영 전", "무엇이 바뀌었는지"],
         "raw": ['<Node seq="00001234" type="Script">',
                 '  <Script>app.nAuthType = 1;</Script>',
@@ -327,11 +332,11 @@ CMP = [
                 '<Node seq="00001236" type="Menu"> …'],
         "pain": "운영본 · 수정본을 번갈아 열어 한 블록씩 대조",
         "mock": "diff",
-        "big": "60분 → 10분", "big_label": "시나리오 검증 시간",
+        "big": "60분 → 10분", "big_label": "배포 전 사전 검증 시간",
         "sub": "변경분만 자동 추출",
     },
     {
-        "no": "2", "kind": "범위", "title": ["이슈", "확인"],
+        "no": "2", "kind": "확산 방지", "title": ["장애 원인", "확인"],
         "desc": ["통화가 어디서", "끊겼는지"],
         "raw": ["10:02:11 [W_Main.dxml][00000010] End Event[ok]",
                 "10:02:13 [W_고객조회.dxml][00000342] MCI_SEND …",
@@ -344,7 +349,7 @@ CMP = [
         "sub": "원인 확인 30분 → 5분",
     },
     {
-        "no": "3", "kind": "예방", "title": ["오류 소스", "운영 반영"],
+        "no": "3", "kind": "장애 예방", "title": ["오류 소스", "운영 반영"],
         "desc": ["잘못된 소스가", "운영에 나가는지"],
         "raw": ["W_보험금청구.xml   SR-A 수정분",
                 "W_보험금청구.xml   SR-B 수정분 (다음 배포)",
@@ -820,51 +825,78 @@ def build_effect():
     g.append(T(M + 36 + est_w(QUANT_LABEL, 14) + 30, 156, QUANT_CAPTION,
                size=13.5, fill=N["mute"]))
 
-    py, rh = 176, 72
-    g.append(R(M, py, W - 2 * M, 10 + rh * len(QUANT) + 10, r=13,
-               fill=N["soft"], stroke=N["line"], sw=1))
+    py, rh, ggap = 176, 70, 12
+    n_q = len(QUANT)
+    n_gap = sum(1 for i in range(1, n_q)
+                if QUANT[i]["group"] != QUANT[i - 1]["group"])
+    ph_ = 10 + rh * n_q + ggap * n_gap + 10
+    g.append(R(M, py, W - 2 * M, ph_, r=13, fill=N["soft"],
+               stroke=N["line"], sw=1))
 
-    ix = M + 28                                   # 패널 안쪽 왼쪽
+    # 행 위치 (범주가 바뀌는 곳은 조금 띄운다)
+    rys, y = [], py + 10
     for i, q in enumerate(QUANT):
-        ry = py + 10 + i * rh
-        mid = ry + rh / 2                         # 행의 세로 가운데
-        if i:
-            g.append(f'<path d="M {ix},{ry} L {W - M - 28},{ry}" '
+        if i and q["group"] != QUANT[i - 1]["group"]:
+            y += ggap
+        rys.append(y)
+        y += rh
+
+    # 범주 띠 — 표 왼쪽에서 두 행씩 묶는다
+    GX, GW = M + 10, 108
+    for gk, (gname, gwhen) in QUANT_GROUPS.items():
+        idx = [i for i, q in enumerate(QUANT) if q["group"] == gk]
+        if not idx:
+            continue
+        y0g, y1g = rys[idx[0]] + 4, rys[idx[-1]] + rh - 4
+        col = N["teal_dk"] if gk == "prevent" else N["navy"]
+        g.append(R(GX, y0g, GW, y1g - y0g, r=9, fill=col))
+        cy_ = (y0g + y1g) / 2
+        g.append(TC(GX + GW / 2, cy_ - 9, gname, size=15, weight="700",
+                    fill="#FFFFFF"))
+        g.append(TC(GX + GW / 2, cy_ + 12, gwhen, size=11.5,
+                    fill="#CFEFEA" if gk == "prevent" else N["on_navy_sub"]))
+
+    ix = GX + GW + 18                             # 행 내용 시작
+    for i, q in enumerate(QUANT):
+        ry = rys[i]
+        mid = ry + rh / 2
+        if i and q["group"] == QUANT[i - 1]["group"]:
+            g.append(f'<path d="M {ix},{ry} L {W - M - 20},{ry}" '
                      f'stroke="{N["line"]}" stroke-width="1"/>')
 
-        g.append(f'<circle cx="{ix + 15}" cy="{mid}" r="15" '
+        g.append(f'<circle cx="{ix + 14}" cy="{mid}" r="14" '
                  f'fill="{N["teal_soft"]}" stroke="{N["teal_line"]}" '
                  f'stroke-width="1"/>')
-        g.append(TC(ix + 15, mid, q["no"], size=14, weight="700",
+        g.append(TC(ix + 14, mid, q["no"], size=13.5, weight="700",
                     fill=N["teal_dk"], keep=True))
-        g.append(TC(ix + 44, mid - 10, q["title"], size=18, weight="700",
+        g.append(TC(ix + 40, mid - 10, q["title"], size=17.5, weight="700",
                     fill=N["ink"], anchor="start"))
-        g.append(TC(ix + 44, mid + 13, q["note"], size=11.5, fill=N["mute"],
+        g.append(TC(ix + 40, mid + 12, q["note"], size=11.5, fill=N["mute"],
                     anchor="start"))
 
         gw = est_w(q["gain"], 13.5) + 22
-        gx = W - M - 22 - gw
+        gx = W - M - 20 - gw
         g.append(R(gx, mid - 13, gw, 26, r=13, fill=N["teal_soft"],
                    stroke=N["teal_line"], sw=1))
         g.append(TC(gx + gw / 2, mid, q["gain"], size=13.5, weight="700",
                     fill=N["teal_dk"]))
 
-        ax = gx - 26
-        aw = est_w(q["after"], 36)
-        lead0 = ix + 44 + max(est_w(q["title"], 18), est_w(q["note"], 11.5)) + 20
-        lead1 = ax - aw - 44 - est_w(q["before"], 25) - 20
-        if lead1 - lead0 > 60:
+        ax = gx - 24
+        aw = est_w(q["after"], 34)
+        lead0 = ix + 40 + max(est_w(q["title"], 17.5), est_w(q["note"], 11.5)) + 18
+        lead1 = ax - aw - 42 - est_w(q["before"], 24) - 18
+        if lead1 - lead0 > 50:
             g.append(f'<path d="M {lead0},{mid} L {lead1},{mid}" '
                      f'stroke="{N["line"]}" stroke-width="1.4" '
                      f'stroke-dasharray="2 6" stroke-linecap="round"/>')
-        g.append(TC(ax, mid, q["after"], size=36, weight="800",
+        g.append(TC(ax, mid, q["after"], size=34, weight="800",
                     fill=N["teal_dk"], anchor="end"))
-        g.append(big_arrow(ax - aw - 21, mid, N["mute"]))
-        g.append(TC(ax - aw - 44, mid, q["before"], size=25, weight="700",
+        g.append(big_arrow(ax - aw - 20, mid, N["mute"]))
+        g.append(TC(ax - aw - 42, mid, q["before"], size=24, weight="700",
                     fill=N["mute"], anchor="end"))
 
     # ── 정성 (흰 바탕, 테두리 없는 3단) ──────────────────────────────
-    ql = py + 10 + rh * len(QUANT) + 10 + 38
+    ql = py + ph_ + 38
     g.append(R(M, ql - 8, 24, 3, r=1.5, fill=N["teal_dk"]))
     g.append(T(M + 36, ql, QUAL_LABEL, size=14, weight="700",
                fill=N["teal_dk"], spacing="2"))
