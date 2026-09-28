@@ -121,6 +121,61 @@ CARDS = [
 FOOTER_L = "※ 수집은 조회 전용으로 동작하며 운영 서버에 설치·설정 변경 사항 없음"
 FOOTER_R = "향후 : 채널 상태 기반 자동 알림 · 배포 승인 절차와 변경 검증 연계"
 
+
+# ─────────────────────────────────────────────────────────────────────────
+#  기대효과 장표 (--page effect)
+# ─────────────────────────────────────────────────────────────────────────
+
+E_TITLE = "기대효과"
+E_SUBTITLE = "ARS 운영 장애 예방 체계 구축"
+E_META = "ARS 7대 · AICC/VGW 3대 · 운영 시나리오 전체"
+
+QUANT_LABEL = "정량 효과"
+QUANT_CAPTION = "동일 업무 기준 구축 전후 소요 시간 비교"
+QUAL_LABEL = "정성 효과"
+QUAL_CAPTION = "수치로 드러나지 않는 운영 방식의 변화"
+
+QUANT = [
+    {
+        "no": "①", "title": "장애 로그 분석 시간",
+        "before": "30분", "after": "5분", "gain": "83% 단축",
+        "note": "※ 서버 접속 · 로그 검색 · 중단 지점 확인 기준",
+    },
+    {
+        "no": "②", "title": "배포 전 변경 비교 시간",
+        "before": "60분", "after": "10분", "gain": "83% 단축",
+        "note": "※ 변경 블록 40개 · 신규 시나리오 2개 추가 기준",
+    },
+    {
+        "no": "③", "title": "업무 구조 파악 시간",
+        "before": "60분", "after": "5분", "gain": "92% 단축",
+        "note": "※ 신규 업무 1건의 ARS 전체 흐름 파악 기준",
+    },
+]
+
+QUAL = [
+    {
+        "icon": "shield", "title": "대응 방식 전환",
+        "desc": ["담당자 경험에 의존한 판단에서",
+                 "화면 기반의 동일한 확인 절차로 전환"],
+        "chip": "사람 중심 → 시스템 중심",
+    },
+    {
+        "icon": "pulse", "title": "장애 자동 탐지 기반 확보",
+        "desc": ["통화별 중단 지점 · 종료 사유가",
+                 "구조화 축적되어 탐지 규칙 적용 가능"],
+        "chip": "중단 시점 요약 → 이상 징후 자동 탐지",
+    },
+    {
+        "icon": "share", "title": "업무 지식의 공유 기반 확보",
+        "desc": ["현업 · 프로젝트 인력이 담당자를 거치지", "않고 업무 구조를 직접 확인"],
+        "chip": "담당자 문의 → 직접 확인",
+    },
+]
+
+E_FOOTER_L = "※ 소요 시간은 동일 업무 기준의 구축 전후 비교값"
+E_FOOTER_R = "향후 : 채널 상태 기반 자동 알림 · 배포 승인 절차와 변경 검증 연계"
+
 # ─────────────────────────────────────────────────────────────────────────
 # 2. 레이아웃 / 색
 # ─────────────────────────────────────────────────────────────────────────
@@ -241,6 +296,22 @@ def chevron_down(cx, y, color):
             f'fill="{color}"/>')
 
 
+def big_arrow(cx, cy, color):
+    """정량 카드의 현황 → 개선 화살표 (굵게)."""
+    return (f'<path d="M {cx - 19},{cy} L {cx + 3},{cy}" stroke="{color}" '
+            f'stroke-width="3" stroke-linecap="round"/>'
+            f'<path d="M {cx},{cy - 9} L {cx + 16},{cy} L {cx},{cy + 9} Z" '
+            f'fill="{color}"/>')
+
+
+def chip_left(x, y, label, color, soft, border, size=13.5, minw=150):
+    """왼쪽 기준의 작은 칩. 빈 버전에서는 테두리만 남는다."""
+    w = max(minw, 28 + est_w(label, size))
+    return "".join([R(x, y, w, 32, r=16, fill=soft, stroke=border, sw=1),
+                    T(x + 14, y + 21, label, size=size, fill=color,
+                      weight="700")])
+
+
 def drop(cx, y1, y2, color):
     """업무 흐름 단계 → 개선 내용 을 잇는 점선."""
     return (f'<path d="M {cx},{y1} L {cx},{y2}" stroke="{color}" '
@@ -300,6 +371,13 @@ ICONS = {
                 '<path d="M9 20.5h6M12 17v3.5"/><path d="M2.5 7.5h19"/>'),
     "shield": ('<path d="M12 2.5l8 3v6.2c0 4.9-3.3 8.9-8 9.8-4.7-.9-8-4.9-8-9.8V5.5z"/>'
                '<path d="M8.4 11.8l2.6 2.6 4.6-4.6"/>'),
+    # 관제 화면 — 이상 징후 탐지
+    "pulse": ('<rect x="2.2" y="4" width="19.6" height="16" rx="2.2"/>'
+              '<path d="M5.4 12.2h3l2.1-4.2 3 8.4 2.1-4.2h3"/>'),
+    # 공유 — 업무 지식 공유
+    "share": ('<circle cx="18" cy="5.6" r="2.9"/><circle cx="6" cy="12" r="2.9"/>'
+              '<circle cx="18" cy="18.4" r="2.9"/>'
+              '<path d="M8.6 10.6l6.8-3.6M8.6 13.4l6.8 3.6"/>'),
 }
 
 
@@ -320,7 +398,15 @@ def icon(name, cx, cy, size, color, sw=1.8, opacity=1.0):
 # 5. 도해 조립
 # ─────────────────────────────────────────────────────────────────────────
 
-def build_svg():
+def _head(g, title, subtitle, meta):
+    """장표 공통 머리글."""
+    g.append(R(M, 40, 5, 44, r=2.5, fill=C["blue"]))
+    g.append(T(M + 20, 68, title, size=32, weight="700", fill=C["ink"]))
+    g.append(T(M + 20, 92, subtitle, size=16, fill=C["mute"]))
+    g.append(T(W - M, 80, meta, size=14, fill=C["mute"], anchor="end"))
+
+
+def build_overview():
     g = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
          f'viewBox="0 0 {W} {H}">',
          R(0, 0, W, H, r=0, fill=C["bg"])]
@@ -328,11 +414,7 @@ def build_svg():
     X0 = M + 28                       # 패널 안쪽 기준 x
     CW = W - 2 * M - 56               # 패널 안쪽 폭
 
-    # ── 머리글 ────────────────────────────────────────────────────────
-    g.append(R(M, 40, 5, 44, r=2.5, fill=C["blue"]))
-    g.append(T(M + 20, 68, TITLE, size=32, weight="700", fill=C["ink"]))
-    g.append(T(M + 20, 92, SUBTITLE, size=16, fill=C["mute"]))
-    g.append(T(W - M, 80, META, size=14, fill=C["mute"], anchor="end"))
+    _head(g, TITLE, SUBTITLE, META)
 
     # ── 패널 1 : 업무 흐름 위의 개선 적용 지점 ───────────────────────
     p1y, p1h = 110, 304
@@ -456,6 +538,96 @@ def build_svg():
     return "".join(g)
 
 
+def build_effect():
+    """기대효과 장표 — 위는 정량(시간 단축), 아래는 정성."""
+    g = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+         f'viewBox="0 0 {W} {H}">',
+         R(0, 0, W, H, r=0, fill=C["bg"])]
+
+    X0 = M + 28
+    CW = W - 2 * M - 56
+    gap = 28
+    cw = (CW - gap * 2) / 3
+
+    _head(g, E_TITLE, E_SUBTITLE, E_META)
+
+    # ── 정량 ─────────────────────────────────────────────────────────
+    p1y, p1h = 110, 376
+    g.append(R(M, p1y, W - 2 * M, p1h, r=14, fill=C["panel"],
+               stroke=C["line"], sw=1))
+    chip, cw_ = pill(X0, p1y + 18, QUANT_LABEL, C["blue"], C["blue_soft"])
+    g.append(chip)
+    g.append(T(X0 + cw_ + 22, p1y + 38, QUANT_CAPTION, size=14, fill=C["mute"]))
+
+    cy, ch = p1y + 66, 282
+    for i, q in enumerate(QUANT):
+        x = X0 + i * (cw + gap)
+        g.append(R(x, cy, cw, ch, r=12, fill=C["panel"], stroke=C["line"]))
+
+        g.append(f'<circle cx="{x + 38}" cy="{cy + 40}" r="19" '
+                 f'fill="{C["blue"]}"/>')
+        g.append(T(x + 38, cy + 47, q["no"], size=19, weight="700",
+                   fill="#FFFFFF", anchor="middle", keep=True))
+        g.append(T(x + 70, cy + 47, q["title"], size=18, weight="700",
+                   fill=C["ink"]))
+        g.append(f'<path d="M {x + 20},{cy + 78} L {x + cw - 20},{cy + 78}" '
+                 f'stroke="{C["line"]}" stroke-width="1"/>')
+
+        lx, rx = x + cw * 0.27, x + cw * 0.73
+        g.append(T(lx, cy + 116, "현 황", size=12.5, weight="700",
+                   fill=C["mute"], anchor="middle", spacing="1"))
+        g.append(T(rx, cy + 116, "개 선", size=12.5, weight="700",
+                   fill=C["blue"], anchor="middle", spacing="1"))
+        g.append(T(lx, cy + 172, q["before"], size=42, weight="700",
+                   fill=C["mute"], anchor="middle"))
+        g.append(T(rx, cy + 172, q["after"], size=52, weight="800",
+                   fill=C["blue"], anchor="middle"))
+        g.append(big_arrow(x + cw / 2, cy + 156, C["blue"]))
+
+        gw = 180
+        g.append(R(x + (cw - gw) / 2, cy + 200, gw, 34, r=17,
+                   fill=C["green_soft"], stroke=C["green_line"]))
+        g.append(T(x + cw / 2, cy + 223, q["gain"], size=15, weight="700",
+                   fill=C["green"], anchor="middle"))
+        g.append(T(x + cw / 2, cy + 260, q["note"], size=12.5,
+                   fill=C["mute"], anchor="middle"))
+
+    # ── 정성 ─────────────────────────────────────────────────────────
+    p2y, p2h = 502, 330
+    g.append(R(M, p2y, W - 2 * M, p2h, r=14, fill=C["panel"],
+               stroke=C["line"], sw=1))
+    chip, cw_ = pill(X0, p2y + 18, QUAL_LABEL, C["slate"], C["slate_soft"])
+    g.append(chip)
+    g.append(T(X0 + cw_ + 22, p2y + 38, QUAL_CAPTION, size=14, fill=C["mute"]))
+
+    cy, ch = p2y + 56, 248
+    for i, q in enumerate(QUAL):
+        x = X0 + i * (cw + gap)
+        g.append(R(x, cy, cw, ch, r=12, fill=C["panel"], stroke=C["line"]))
+
+        g.append(f'<circle cx="{x + 48}" cy="{cy + 48}" r="27" '
+                 f'fill="{C["blue_soft"]}"/>')
+        g.append(icon(q.get("icon", ""), x + 48, cy + 48, 28, C["blue"], sw=1.7))
+        g.append(T(x + 88, cy + 56, q["title"], size=18, weight="700",
+                   fill=C["ink"]))
+        g.append(f'<path d="M {x + 24},{cy + 94} L {x + cw - 24},{cy + 94}" '
+                 f'stroke="{C["line"]}" stroke-width="1"/>')
+        for j, ln in enumerate(q["desc"]):
+            g.append(T(x + 28, cy + 126 + j * 24, ln, size=14.5, fill=C["sub"]))
+        g.append(chip_left(x + 24, cy + 186, q.get("chip", ""),
+                           C["blue"], C["blue_soft"], C["blue_line"]))
+
+    g.append(T(M, 880, E_FOOTER_L, size=13.5, fill=C["mute"]))
+    g.append(T(W - M, 880, E_FOOTER_R, size=13.5, fill=C["mute"], anchor="end"))
+
+    g.append('</svg>')
+    return "".join(g)
+
+
+def build_svg(page="overview"):
+    return build_effect() if page == "effect" else build_overview()
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # 6. 실행
 # ─────────────────────────────────────────────────────────────────────────
@@ -489,7 +661,11 @@ def main():
     ap.add_argument("--guides", action="store_true",
                     help="빈 버전에 글자 들어갈 자리를 연한 막대로 표시")
     ap.add_argument("--only", choices=["full", "blank"], default=None,
-                    help="한 쪽만 생성 (기본은 둘 다)")
+                    help="문구 있는 것 / 빈 것 중 한 쪽만 생성 (기본은 둘 다)")
+    ap.add_argument("--page", choices=["overview", "effect", "both"],
+                    default="both",
+                    help="overview=구축 요약 장표, effect=기대효과 장표 "
+                         "(기본은 둘 다)")
     ap.add_argument("--png", action="store_true",
                     help="cairosvg 가 설치돼 있으면 PNG 도 함께 생성")
     ap.add_argument("--scale", type=float, default=2.0,
@@ -505,13 +681,15 @@ def main():
     base, ext = os.path.splitext(args.out)
     ext = ext or ".svg"
 
-    if args.only != "blank":
-        BLANK, GUIDES = False, False
-        write(base + ext, build_svg(), args.png, args.scale)
-
-    if args.only != "full":
-        BLANK, GUIDES = True, args.guides
-        write(base + "_blank" + ext, build_svg(), args.png, args.scale)
+    pages = ["overview", "effect"] if args.page == "both" else [args.page]
+    for page in pages:
+        stem = base if page == "overview" else base + "_effect"
+        if args.only != "blank":
+            BLANK, GUIDES = False, False
+            write(stem + ext, build_svg(page), args.png, args.scale)
+        if args.only != "full":
+            BLANK, GUIDES = True, args.guides
+            write(stem + "_blank" + ext, build_svg(page), args.png, args.scale)
 
     print()
     print("PPT 사용법")
