@@ -309,9 +309,10 @@ C_TITLE = "개선 전 · 후 비교"
 C_SUBTITLE = "같은 업무를 할 때 보게 되는 화면"
 C_META = "※ 개선 후 화면은 실제 기능 기준 예시"
 
+#  기대효과의 세 지표에 맞춰, 서로 다른 결(효율 / 범위 / 안정성)로 나눈다
 CMP = [
     {
-        "no": "1", "title": ["배포 전", "변경 검증"],
+        "no": "1", "kind": "효율", "title": ["시나리오", "검증 시간"],
         "desc": ["SR 반영 전", "무엇이 바뀌었는지"],
         "raw": ['<Node seq="00001234" type="Script">',
                 '  <Script>app.nAuthType = 1;</Script>',
@@ -320,34 +321,34 @@ CMP = [
                 '<Node seq="00001236" type="Menu"> …'],
         "pain": "운영본 · 수정본을 번갈아 열어 한 블록씩 대조",
         "mock": "diff",
-        "big": "60분 → 10분", "big_label": "변경 검증 시간",
-        "sub": "재배포 25% → 0%",
+        "big": "60분 → 10분", "big_label": "시나리오 검증 시간",
+        "sub": "변경분만 자동 추출",
     },
     {
-        "no": "2", "title": ["장애 · 문의", "원인 확인"],
+        "no": "2", "kind": "범위", "title": ["이슈", "확인"],
         "desc": ["통화가 어디서", "끊겼는지"],
         "raw": ["10:02:11 [W_Main.dxml][00000010] End Event[ok]",
                 "10:02:13 [W_고객조회.dxml][00000342] MCI_SEND …",
                 "10:02:14 CTIInterface … Inputdigit=1",
                 "10:02:19 [W_보험금.dxml][00001234] End Event[ok]",
                 "10:02:31 TERM REASON ==> TM_USRSTOP"],
-        "pain": "수백 줄을 처음부터 읽어 끊긴 지점 판단",
+        "pain": "서버별로 접속해 수백 줄을 처음부터 읽음",
         "mock": "precheck",
-        "big": "30분 → 5분", "big_label": "원인 확인 시간",
-        "sub": "서버 10대 → 화면 1개",
+        "big": "10대 → 1화면", "big_label": "확인 대상 서버",
+        "sub": "원인 확인 30분 → 5분",
     },
     {
-        "no": "3", "title": ["업무 구조", "파악"],
-        "desc": ["이 블록이 어느", "업무의 몇 단계인지"],
-        "raw": ["[W_보험금.dxml][00001234]",
-                "[W_보험금.dxml][00001235]",
-                "[W_인증공통.dxml][00000411]",
-                "[W_고객조회.dxml][00000342]",
-                "→ 업무 · 단계 표시 없음"],
-        "pain": "블록 번호로 업무 위치를 유추",
-        "mock": "tree",
-        "big": "2명", "big_label": "신계약 프로젝트 활용",
-        "sub": "전체 트리 PDF 일괄 제공",
+        "no": "3", "kind": "안정성", "title": ["재배포", "비율"],
+        "desc": ["잘못된 소스가", "운영에 나가는지"],
+        "raw": ["W_보험금청구.xml   SR-A 수정분",
+                "W_보험금청구.xml   SR-B 수정분 (다음 배포)",
+                "W_인증공통.xml     SR-A 연관 수정 누락",
+                "",
+                "→ 한 파일에 두 SR 이 섞인 채 배포"],
+        "pain": "혼재 · 누락을 운영 반영 후에야 발견",
+        "mock": "redeploy",
+        "big": "25% → 0%", "big_label": "재배포 비율",
+        "sub": "적용 후 SR 5건 재배포 0건",
     },
 ]
 
@@ -1309,6 +1310,39 @@ def _mock_tree(g, x, y, w):
                 "입력 3 · 출력 5", size=11.5, fill=N["sub"], anchor="start"))
 
 
+def _mock_redeploy(g, x, y, w):
+    """배포 전 전체 변경 목록 — 이번 배포에 무엇이 함께 나가는지 한 번에."""
+    g.append(T(x, y + 17, "이번 배포 전체 변경", size=14, weight="700",
+               fill=N["ink"]))
+    cx = x + est_w("이번 배포 전체 변경", 14) + 12
+    for lab in ("시나리오 2", "블록 5", "변수 3"):
+        c, cw_ = chipc(cx, y + 12, lab, 11.5, N["sub"], N["soft"], N["line"])
+        g.append(c)
+        cx += cw_ + 6
+
+    rows = [("W_보험금청구.xml", "본인인증 분기", "변수 변경", False),
+            ("W_보험금청구.xml", "청구 접수", "버튼 추가", False),
+            ("W_인증공통.xml", "인증 결과 처리", "영향 확인 필요", True)]
+    for i, (f, blk, tag_, warn) in enumerate(rows):
+        yy = y + 46 + i * 28
+        if warn:
+            g.append(R(x - 6, yy - 12, w + 12, 24, r=6, fill=N["amber_soft"],
+                       stroke=N["amber_line"]))
+        g.append(TM(x + 4, yy + 4, f, size=12, fill=N["sub"]))
+        g.append(TC(x + 170, yy, blk, size=13, weight="700", fill=N["ink"],
+                    anchor="start"))
+        tw_ = est_w(tag_, 11.5) + 18
+        c, _ = chipc(x + w - tw_, yy, tag_, 11.5,
+                     N["amber"] if warn else N["teal_dk"],
+                     N["page"] if warn else N["teal_soft"],
+                     N["amber_line"] if warn else N["teal_line"])
+        g.append(c)
+
+    yy = y + 134
+    g.append(TC(x, yy, "▶  섞이거나 빠진 변경을 배포 전에 걸러 반영",
+                size=13, weight="700", fill=N["teal_dk"], anchor="start"))
+
+
 def build_compare():
     """개선 전 · 후 비교 — 원본(개선 전) 과 시스템 화면(개선 후) 을 마주 놓는다."""
     g = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
@@ -1340,6 +1374,10 @@ def build_compare():
                  f'fill="{N["teal"]}"/>')
         g.append(TC(LX + 32, by + 36, it["no"], size=14, weight="700",
                     fill=N["navy"], keep=True))
+        if it.get("kind"):
+            c, _ = chipc(LX + 54, by + 36, it["kind"], 12, N["teal"],
+                         N["navy"], N["teal"])
+            g.append(c)
         for j, ln in enumerate(it["title"]):
             g.append(T(LX + 18, by + 90 + j * 26, ln, size=20, weight="700",
                        fill="#FFFFFF", ghost=N["ghost_navy"]))
@@ -1378,7 +1416,8 @@ def build_compare():
                     fill=N["mute"], anchor="start"))
         mx, my, mw = BX + 20, by + 44, BW - 40
         {"diff": _mock_diff, "precheck": _mock_precheck,
-         "tree": _mock_tree}[it["mock"]](g, mx, my, mw)
+         "tree": _mock_tree, "redeploy": _mock_redeploy}[it["mock"]](
+             g, mx, my, mw)
 
         # 오른쪽 : 효과
         g.append(R(EX, by, EW, bh, r=12, fill=N["teal_dk"]))
