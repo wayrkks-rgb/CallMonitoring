@@ -6,6 +6,10 @@ AI 이미지 생성기는 한글을 정확히 그리지 못한다(자모가 깨�
 나온다). 보고자료는 문구가 틀리면 안 되므로, 좌표를 직접 계산해서 그린다.
 표준 라이브러리만 사용하므로 폐쇄망에서도 그대로 돌아간다.
 
+도해는 두 층으로 되어 있다.
+    위  ─ ARS 운영 업무 흐름 위에 '어디를 어떻게 개선했는지' 를 얹은 그림
+    아래 ─ 개선 과제별 현황 → 개선 → 효과
+
 실행하면 두 개가 같이 나온다.
     summary.svg        문구까지 채워진 완성본
     summary_blank.svg  틀 + 아이콘만 있는 빈 버전 (문구는 PPT 에서 직접 입력)
@@ -13,7 +17,6 @@ AI 이미지 생성기는 한글을 정확히 그리지 못한다(자모가 깨�
 사용법:
     python make_summary_image.py
     python make_summary_image.py --guides        # 빈 버전에 글자 자리 표시
-    python make_summary_image.py --out 도해.svg
     python make_summary_image.py --png           # cairosvg 있으면 PNG 도
 
 PPT 에 넣는 방법:
@@ -22,8 +25,8 @@ PPT 에 넣는 방법:
       (이러면 PPT 안에서 글자/색/위치를 직접 고칠 수 있다)
 
 문구를 바꿀 곳:
-    아래 TITLE / STAGES / CARDS / FOOTER 만 고치면 된다.
-    리스트의 원소 하나 = 한 줄이다. 한 줄은 한글 18자 정도까지.
+    아래 TITLE / FLOW / IMPROVEMENTS / BASE_BAND / CARDS / FOOTER 만 고치면 된다.
+    리스트의 원소 하나 = 한 줄이다.
 """
 import argparse
 import html
@@ -35,53 +38,58 @@ import sys
 # ─────────────────────────────────────────────────────────────────────────
 
 TITLE = "ARS 운영 장애 예방 체계 구축"
-SUBTITLE = "로그 통합 조회 · 시나리오 변경 비교 · 업무 구조 조회"
+SUBTITLE = "배포 전 변경 비교 · 통화 중단 지점 제시 · 업무 구조 E2E 조회"
 META = "ARS 7대 · AICC/VGW 3대 · 운영 시나리오 전체    |    운영 서버 변경 없음"
 
-# 상단 : 시스템이 어떻게 구성되어 있는지 (왼쪽 → 오른쪽 흐름)
-#   icon : servers / collect / database / monitor  중에서 고른다
-STAGES = [
+PANEL1_LABEL = "개선 적용 지점"
+PANEL1_CAPTION = "ARS 운영 업무 흐름에서 어느 단계를 어떻게 개선했는지"
+PANEL2_LABEL = "개선 효과"
+PANEL2_CAPTION = "과제별 현황 대비 달라진 점과 그 효과"
+
+# 윗줄 : ARS 운영 업무 흐름 (왼쪽 → 오른쪽)
+#   icon : edit / deploy / call / alert
+FLOW = [
+    {"label": "시나리오 변경", "icon": "edit"},
+    {"label": "운영 배포", "icon": "deploy"},
+    {"label": "고객 통화", "icon": "call"},
+    {"label": "장애 · 문의 대응", "icon": "alert"},
+]
+
+# 아랫줄 : 그 단계에 붙은 개선 내용
+#   span  : 위 FLOW 의 몇 번째부터 몇 번째 단계에 걸치는지 (0부터)
+#   accent: True 면 강조(파랑). 번호 붙은 개선 과제
+#   icon  : diff / collect / breakpoint / tree ...
+IMPROVEMENTS = [
     {
-        "title": "수집 대상",
-        "icon": "servers",
-        "items": [
-            "ARS 7대 (Windows · OpenSSH)",
-            "AICC · VGW 3대 (Linux)",
-            "운영/과거 시나리오 XML",
-        ],
+        "span": (0, 1), "accent": True, "icon": "diff",
+        "title": "① 배포 전 변경 내용 자동 비교",
+        "desc": "블록 · 변수 · 메뉴 버튼 단위 비교 + 변경된 업무 위치까지 표시",
+        "tag": "잘못된 배포 차단",
     },
     {
-        "title": "수집 방식",
-        "icon": "collect",
-        "items": [
-            "원격 조회 전용 (설치 없음)",
-            "SSH 키 인증 · 중단 시 자동 재개",
-            "실시간 + 30일 소급 수집",
-        ],
+        "span": (2, 2), "accent": False, "icon": "collect",
+        "title": "로그 · 통화 이력 상시 수집",
+        "desc": "ARS 7대 · AICC 3대 · 30일 보관",
+        "tag": "",
     },
     {
-        "title": "처리",
-        "icon": "database",
-        "items": [
-            "통화 단위 색인 (30일 보관)",
-            "시나리오 구조 파싱 · 이력 비교",
-            "블록 번호 → 업무 위치 환산",
-        ],
-    },
-    {
-        "title": "제공 화면",
-        "icon": "monitor",
-        "accent": True,                      # 강조색으로 표시
-        "items": [
-            "① 배포 전 변경 내용 비교",
-            "② 통합 로그 검색 · 중단 지점",
-            "③ 업무 구조 E2E 조회",
-        ],
+        "span": (3, 3), "accent": True, "icon": "breakpoint",
+        "title": "② 중단 지점 자동 제시",
+        "desc": "마지막 진행 지점 · 종료 사유",
+        "tag": "원인 확인 단축",
     },
 ]
 
-# 하단 : 개선 효과 (현황 → 개선 → 효과)
-#   icon : diff / breakpoint / tree  중에서 고른다
+# 맨 아래 띠 : ①②에 공통으로 쓰이는 기반
+BASE_BAND = {
+    "icon": "tree",
+    "title": "③ 업무 구조 E2E",
+    "desc": "블록 번호를 업무 위치(메뉴 경로 · STEP)로 환산하여 전체 흐름 제공",
+    "note": "① · ② 에 공통 적용",
+}
+
+# 아래 패널 : 개선 효과 (현황 → 개선 → 효과)
+#   icon : diff / breakpoint / tree
 CARDS = [
     {
         "no": "①",
@@ -135,6 +143,9 @@ C = {
     "blue":       "#1D4ED8",
     "blue_soft":  "#EFF6FF",
     "blue_line":  "#BFDBFE",
+    "amber":      "#B45309",
+    "amber_soft": "#FFFBEB",
+    "amber_line": "#FDE68A",
     "green":      "#047857",
     "green_soft": "#ECFDF5",
     "green_line": "#A7F3D0",
@@ -168,6 +179,8 @@ def T(x, y, s, size=15, fill=None, weight="400", anchor="start",
     keep=True 는 문구가 아니라 틀의 일부인 것(①②③ 같은 번호)이라
     빈 버전에서도 그대로 남긴다.
     """
+    if not s:
+        return ""
     if BLANK and not keep:
         if not GUIDES:
             return ""
@@ -187,7 +200,7 @@ def R(x, y, w, h, r=10, fill="none", stroke=None, sw=1):
 
 
 def top_round(x, y, w, h, r, fill):
-    """위쪽 두 각만 둥근 사각형 (박스 머리띠용)."""
+    """위쪽 두 각만 둥근 사각형."""
     return (f'<path d="M {x},{y + h} L {x},{y + r} '
             f'A {r},{r} 0 0 1 {x + r},{y} L {x + w - r},{y} '
             f'A {r},{r} 0 0 1 {x + w},{y + r} L {x + w},{y + h} Z" fill="{fill}"/>')
@@ -200,6 +213,17 @@ def pill(x, y, label, color, soft):
            T(x + w / 2, y + 20, label, size=15, fill=color,
              weight="700", anchor="middle")]
     return "".join(out), w
+
+
+def tag(x, y, label, color, soft, border):
+    """작은 강조 꼬리표 (오른쪽 정렬로 쓴다). 오른쪽 끝 x 기준."""
+    if not label:
+        return ""
+    w = 22 + est_w(label, 12.5)
+    out = [R(x - w, y, w, 24, r=12, fill=soft, stroke=border, sw=1),
+           T(x - w / 2, y + 16, label, size=12.5, fill=color,
+             weight="700", anchor="middle")]
+    return "".join(out)
 
 
 def arrow_right(cx, cy, color):
@@ -216,31 +240,43 @@ def chevron_down(cx, y, color):
             f'fill="{color}"/>')
 
 
+def drop(cx, y1, y2, color):
+    """업무 흐름 단계 → 개선 내용 을 잇는 점선."""
+    return (f'<path d="M {cx},{y1} L {cx},{y2}" stroke="{color}" '
+            f'stroke-width="1.6" stroke-dasharray="3 4"/>')
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # 4. 아이콘 (24x24 기준의 선 아이콘. 색·크기는 호출할 때 정한다)
 # ─────────────────────────────────────────────────────────────────────────
 
 ICONS = {
-    # 서버 더미 — 수집 대상
-    "servers": ('<rect x="3" y="3.5" width="18" height="7" rx="1.8"/>'
-                '<rect x="3" y="13.5" width="18" height="7" rx="1.8"/>'
-                '<path d="M6.5 7h0.01M6.5 17h0.01" stroke-width="2.4"/>'),
-    # 아래로 받아 담기 — 수집 방식
-    "collect": ('<path d="M12 3v10"/><path d="M8 9.5l4 4 4-4"/>'
-                '<path d="M4 17v2.5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V17"/>'),
-    # 저장/색인 — 처리
-    "database": ('<ellipse cx="12" cy="5.5" rx="8" ry="2.8"/>'
-                 '<path d="M4 5.5v13c0 1.55 3.58 2.8 8 2.8s8-1.25 8-2.8v-13"/>'
-                 '<path d="M4 12c0 1.55 3.58 2.8 8 2.8s8-1.25 8-2.8"/>'),
-    # 화면 — 제공 화면
-    "monitor": ('<rect x="2.5" y="3.5" width="19" height="13.5" rx="2"/>'
-                '<path d="M9 20.5h6M12 17v3.5"/><path d="M2.5 7.5h19"/>'),
+    # ── 업무 흐름 ──────────────────────────────────────────────
+    # 연필 — 시나리오 변경
+    "edit": ('<path d="M3.5 20.5h17"/>'
+             '<path d="M15.1 3.4l4.5 4.5L9.3 18.2l-5.2.7.7-5.2z"/>'
+             '<path d="M13.3 5.2l4.5 4.5"/>'),
+    # 위로 올림 — 운영 배포
+    "deploy": ('<rect x="3" y="2.6" width="18" height="3.4" rx="1.4"/>'
+               '<path d="M12 21V9"/><path d="M7.2 13.8L12 9l4.8 4.8"/>'),
+    # 헤드셋 — 고객 통화
+    "call": ('<path d="M4 14.5v-2.2a8 8 0 0 1 16 0v2.2"/>'
+             '<rect x="2.2" y="13.6" width="4.6" height="7.2" rx="2.3"/>'
+             '<rect x="17.2" y="13.6" width="4.6" height="7.2" rx="2.3"/>'),
+    # 경고 — 장애 · 문의 대응
+    "alert": ('<path d="M12 3.4L2.2 20.6h19.6z"/>'
+              '<path d="M12 9.8v4.6"/><path d="M12 17.6h0.01" stroke-width="2.6"/>'),
+
+    # ── 개선 내용 ──────────────────────────────────────────────
     # 두 문서 비교(+/-) — 배포 전 변경 비교
     "diff": ('<rect x="2.5" y="3.5" width="8.5" height="17" rx="1.6"/>'
              '<rect x="13" y="3.5" width="8.5" height="17" rx="1.6"/>'
              '<path d="M4.8 9h3.9"/><path d="M15.3 9h3.9M17.25 7.05v3.9"/>'
              '<path d="M4.8 13.5h3.9M4.8 16.5h2.4"/>'
              '<path d="M15.3 13.5h3.9M15.3 16.5h2.4"/>'),
+    # 아래로 받아 담기 — 상시 수집
+    "collect": ('<path d="M12 3v10"/><path d="M8 9.5l4 4 4-4"/>'
+                '<path d="M4 17v2.5a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V17"/>'),
     # 흐름 위의 지점 표시 — 통화 중단 지점
     "breakpoint": ('<path d="M12 21.5s6.3-5.7 6.3-10.4A6.3 6.3 0 0 0 5.7 11.1'
                    'c0 4.7 6.3 10.4 6.3 10.4z"/>'
@@ -251,6 +287,18 @@ ICONS = {
              '<rect x="1.5" y="16" width="7" height="5.5" rx="1.4"/>'
              '<rect x="15.5" y="16" width="7" height="5.5" rx="1.4"/>'
              '<path d="M12 8v3.8M5 16v-4.2h14V16"/>'),
+
+    # ── 예비 ──────────────────────────────────────────────────
+    "servers": ('<rect x="3" y="3.5" width="18" height="7" rx="1.8"/>'
+                '<rect x="3" y="13.5" width="18" height="7" rx="1.8"/>'
+                '<path d="M6.5 7h0.01M6.5 17h0.01" stroke-width="2.4"/>'),
+    "database": ('<ellipse cx="12" cy="5.5" rx="8" ry="2.8"/>'
+                 '<path d="M4 5.5v13c0 1.55 3.58 2.8 8 2.8s8-1.25 8-2.8v-13"/>'
+                 '<path d="M4 12c0 1.55 3.58 2.8 8 2.8s8-1.25 8-2.8"/>'),
+    "monitor": ('<rect x="2.5" y="3.5" width="19" height="13.5" rx="2"/>'
+                '<path d="M9 20.5h6M12 17v3.5"/><path d="M2.5 7.5h19"/>'),
+    "shield": ('<path d="M12 2.5l8 3v6.2c0 4.9-3.3 8.9-8 9.8-4.7-.9-8-4.9-8-9.8V5.5z"/>'
+               '<path d="M8.4 11.8l2.6 2.6 4.6-4.6"/>'),
 }
 
 
@@ -276,61 +324,88 @@ def build_svg():
          f'viewBox="0 0 {W} {H}">',
          R(0, 0, W, H, r=0, fill=C["bg"])]
 
-    # ── 머리글 ────────────────────────────────────────────────────────
-    g.append(R(M, 46, 5, 46, r=2.5, fill=C["blue"]))
-    g.append(T(M + 20, 76, TITLE, size=32, weight="700", fill=C["ink"]))
-    g.append(T(M + 20, 100, SUBTITLE, size=16, fill=C["mute"]))
-    g.append(T(W - M, 88, META, size=14, fill=C["mute"], anchor="end"))
+    X0 = M + 28                       # 패널 안쪽 기준 x
+    CW = W - 2 * M - 56               # 패널 안쪽 폭
 
-    # ── 패널 1 : 구성 ────────────────────────────────────────────────
-    p1y, p1h = 126, 250
+    # ── 머리글 ────────────────────────────────────────────────────────
+    g.append(R(M, 40, 5, 44, r=2.5, fill=C["blue"]))
+    g.append(T(M + 20, 68, TITLE, size=32, weight="700", fill=C["ink"]))
+    g.append(T(M + 20, 92, SUBTITLE, size=16, fill=C["mute"]))
+    g.append(T(W - M, 80, META, size=14, fill=C["mute"], anchor="end"))
+
+    # ── 패널 1 : 업무 흐름 위의 개선 적용 지점 ───────────────────────
+    p1y, p1h = 110, 304
     g.append(R(M, p1y, W - 2 * M, p1h, r=14, fill=C["panel"],
                stroke=C["line"], sw=1))
-    chip, cw_ = pill(M + 28, p1y + 20, "구 성", C["slate"], C["slate_soft"])
+    chip, cw_ = pill(X0, p1y + 18, PANEL1_LABEL, C["slate"], C["slate_soft"])
     g.append(chip)
-    g.append(T(M + 28 + cw_ + 22, p1y + 40,
-               "수집부터 화면 제공까지 하나의 시스템으로 구성",
-               size=14, fill=C["mute"]))
+    g.append(T(X0 + cw_ + 22, p1y + 38, PANEL1_CAPTION, size=14, fill=C["mute"]))
 
-    bx0, gap = M + 28, 40
-    bw = (W - 2 * M - 56 - gap * 3) / 4
-    by, bh = p1y + 66, 160
-    for i, st in enumerate(STAGES):
-        x = bx0 + i * (bw + gap)
-        accent = st.get("accent")
-        head = C["blue"] if accent else C["slate"]
-        g.append(R(x, by, bw, bh, r=12, fill=C["panel"],
-                   stroke=C["blue_line"] if accent else C["line"],
-                   sw=1.6 if accent else 1))
-        g.append(top_round(x, by, bw, 44, 12, head))
-        g.append(icon(st.get("icon", ""), x + 32, by + 22, 22,
-                      "#FFFFFF", sw=1.8, opacity=0.95))
-        g.append(T(x + bw / 2 + 14, by + 29, st["title"], size=18,
-                   weight="700", fill="#FFFFFF", anchor="middle"))
-        for j, it in enumerate(st["items"]):
-            ty = by + 78 + j * 30
-            g.append(f'<circle cx="{x + 20}" cy="{ty - 5}" r="2.6" '
-                     f'fill="{C["blue"] if accent else C["mute"]}"/>')
-            g.append(T(x + 32, ty, it, size=15,
-                       fill=C["ink"] if accent else C["sub"],
-                       weight="600" if accent else "400"))
-        if i < len(STAGES) - 1:
-            g.append(arrow_right(x + bw + gap / 2, by + bh / 2, C["mute"]))
+    gap = 40
+    n = len(FLOW)
+    fw = (CW - gap * (n - 1)) / n
+    fy, fh = 170, 52
+    for i, st in enumerate(FLOW):
+        x = X0 + i * (fw + gap)
+        g.append(R(x, fy, fw, fh, r=10, fill=C["slate_soft"],
+                   stroke=C["line"], sw=1))
+        g.append(icon(st.get("icon", ""), x + 28, fy + fh / 2, 22,
+                      C["slate"], sw=1.8))
+        g.append(T(x + fw / 2 + 14, fy + 33, st["label"], size=17,
+                   weight="700", fill=C["ink"], anchor="middle"))
+        if i < n - 1:
+            g.append(arrow_right(x + fw + gap / 2, fy + fh / 2, C["mute"]))
+
+    iy, ih = 236, 104
+    for im in IMPROVEMENTS:
+        a, b = im["span"]
+        x = X0 + a * (fw + gap)
+        w = (b - a) * (fw + gap) + fw
+        acc = im.get("accent")
+        for k in range(a, b + 1):
+            g.append(drop(X0 + k * (fw + gap) + fw / 2, fy + fh, iy,
+                          C["blue_line"] if acc else C["line"]))
+        g.append(R(x, iy, w, ih, r=12,
+                   fill=C["blue_soft"] if acc else C["panel"],
+                   stroke=C["blue_line"] if acc else C["line"],
+                   sw=1.6 if acc else 1))
+        g.append(R(x + 1, iy + 14, 4, ih - 28, r=2,
+                   fill=C["blue"] if acc else C["mute"]))
+        g.append(icon(im.get("icon", ""), x + 40, iy + 46, 28,
+                      C["blue"] if acc else C["mute"], sw=1.7))
+        g.append(T(x + 68, iy + 38, im["title"], size=17,
+                   weight="700", fill=C["ink"] if acc else C["sub"]))
+        g.append(T(x + 68, iy + 64, im["desc"], size=13.5, fill=C["sub"]))
+        # 꼬리표는 제목과 겹치지 않도록 항상 아래쪽 오른편에 둔다
+        if acc:
+            g.append(tag(x + w - 16, iy + 72, im.get("tag", ""),
+                         C["amber"], C["amber_soft"], C["amber_line"]))
+
+    by, bh = 350, 46
+    g.append(R(X0, by, CW, bh, r=10, fill=C["blue_soft"],
+               stroke=C["blue_line"], sw=1.6))
+    g.append(icon(BASE_BAND.get("icon", ""), X0 + 28, by + bh / 2, 22,
+                  C["blue"], sw=1.7))
+    g.append(T(X0 + 52, by + 29, BASE_BAND["title"], size=16.5,
+               weight="700", fill=C["blue"]))
+    g.append(T(X0 + 52 + est_w(BASE_BAND["title"], 16.5) + 16, by + 29,
+               BASE_BAND["desc"], size=14, fill=C["sub"]))
+    g.append(tag(X0 + CW - 16, by + 11, BASE_BAND.get("note", ""),
+                 C["blue"], C["panel"], C["blue_line"]))
 
     # ── 패널 2 : 개선 효과 ───────────────────────────────────────────
-    p2y, p2h = 390, 428
+    p2y, p2h = 430, 426
     g.append(R(M, p2y, W - 2 * M, p2h, r=14, fill=C["panel"],
                stroke=C["line"], sw=1))
-    chip, cw_ = pill(M + 28, p2y + 20, "개선 효과", C["blue"], C["blue_soft"])
+    chip, cw_ = pill(X0, p2y + 18, PANEL2_LABEL, C["blue"], C["blue_soft"])
     g.append(chip)
-    g.append(T(M + 28 + cw_ + 22, p2y + 40, "현황 대비 달라진 점과 그 효과",
-               size=14, fill=C["mute"]))
+    g.append(T(X0 + cw_ + 22, p2y + 38, PANEL2_CAPTION, size=14, fill=C["mute"]))
 
     cgap = 28
-    cw = (W - 2 * M - 56 - cgap * 2) / 3
-    cy, ch = p2y + 52, 350
+    cw = (CW - cgap * 2) / 3
+    cy, ch = p2y + 50, 350
     for i, cd in enumerate(CARDS):
-        x = M + 28 + i * (cw + cgap)
+        x = X0 + i * (cw + cgap)
         g.append(R(x, cy, cw, ch, r=12, fill=C["panel"], stroke=C["line"]))
 
         # 제목 + 아이콘
@@ -373,8 +448,8 @@ def build_svg():
                    weight="700", fill=C["green"], anchor="middle"))
 
     # ── 꼬리말 ───────────────────────────────────────────────────────
-    g.append(T(M, 852, FOOTER_L, size=13.5, fill=C["mute"]))
-    g.append(T(W - M, 852, FOOTER_R, size=13.5, fill=C["mute"], anchor="end"))
+    g.append(T(M, 880, FOOTER_L, size=13.5, fill=C["mute"]))
+    g.append(T(W - M, 880, FOOTER_R, size=13.5, fill=C["mute"], anchor="end"))
 
     g.append('</svg>')
     return "".join(g)
