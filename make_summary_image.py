@@ -143,9 +143,9 @@ QUANT_GROUPS = {
 
 QUANT = [
     {
-        "group": "prevent", "no": "①", "title": "배포 전 사전 검증 시간",
-        "before": "60분", "after": "10분", "gain": "83% 단축",
-        "note": "※ 변경 블록 40개 · 신규 시나리오 2개 추가 기준",
+        "group": "prevent", "no": "①", "title": "끊어진 이동 사전 검출",
+        "before": "0건", "after": "○건", "gain": "배포 전 차단",
+        "note": "※ 없는 시나리오 · 블록으로 가는 이동 — 운영 시나리오 전수 점검 기준",
     },
     {
         "group": "prevent", "no": "②", "title": "오류 소스 운영 반영 비율",
@@ -154,14 +154,14 @@ QUANT = [
                 "적용 후('26.09) 5건 중 0건",
     },
     {
-        "group": "contain", "no": "③", "title": "장애 원인 확인 시간",
+        "group": "contain", "no": "③", "title": "장애 원인 특정 시간",
         "before": "30분", "after": "5분", "gain": "83% 단축",
-        "note": "※ 서버 접속 · 로그 검색 · 중단 지점 확인 기준",
+        "note": "※ 중단 지점 · 종료 사유 자동 제시 — 서버 접속 · 로그 검색 포함",
     },
     {
-        "group": "contain", "no": "④", "title": "확인 대상 서버",
-        "before": "10대", "after": "1화면", "gain": "통합 조회",
-        "note": "※ ARS 7대 · AICC/VGW 3대 로그를 한 화면에서 검색",
+        "group": "contain", "no": "④", "title": "장애 1건당 영향 통화",
+        "before": "○건", "after": "○건", "gain": "피해 확산 차단",
+        "note": "※ 시간당 콜 수 × 원인 특정 시간 (업무시간 평균 기준)",
     },
 ]
 
@@ -187,9 +187,9 @@ QUAL = [
     },
 ]
 
-E_SUMMARY = ("배포 전 오류 소스 차단 25% → 0% · 장애 발생 시 원인 확인 5분 이내 — "
-             "경험 의존 판단을 시스템 확인 절차로 전환")
-E_FOOTER_L = "※ 소요 시간은 동일 업무 기준의 구축 전후 비교값"
+E_SUMMARY = ("배포 전 끊어진 이동 · 오류 소스 차단 — "
+             "장애 발생 시 원인 5분 내 특정으로 피해 확산 차단")
+E_FOOTER_L = "※ ○ 표시는 운영 환경에서 점검 스크립트로 확인할 값"
 E_FOOTER_R = "향후 : 채널 상태 기반 자동 알림 · 배포 승인 절차와 변경 검증 연계"
 
 
@@ -332,8 +332,8 @@ CMP = [
                 '<Node seq="00001236" type="Menu"> …'],
         "pain": "운영본 · 수정본을 번갈아 열어 한 블록씩 대조",
         "mock": "diff",
-        "big": "60분 → 10분", "big_label": "배포 전 사전 검증 시간",
-        "sub": "변경분만 자동 추출",
+        "big": "○건", "big_label": "끊어진 이동 사전 검출",
+        "sub": "배포 전 수정 필요 경고",
     },
     {
         "no": "2", "kind": "확산 방지", "title": ["장애 원인", "확인"],
@@ -345,8 +345,8 @@ CMP = [
                 "10:02:31 TERM REASON ==> TM_USRSTOP"],
         "pain": "서버별로 접속해 수백 줄을 처음부터 읽음",
         "mock": "precheck",
-        "big": "10대 → 1화면", "big_label": "확인 대상 서버",
-        "sub": "원인 확인 30분 → 5분",
+        "big": "30분 → 5분", "big_label": "장애 원인 특정 시간",
+        "sub": "영향 통화 ○건 → ○건",
     },
     {
         "no": "3", "kind": "장애 예방", "title": ["오류 소스", "운영 반영"],
@@ -1204,7 +1204,15 @@ RED = "#C53030"
 
 
 def _mock_diff(g, x, y, w):
-    """시나리오 DIFF 결과 화면 — 변경 블록 · 업무 위치 · 변수 · 화면 · 연관."""
+    """시나리오 DIFF 결과 화면 — 끊어진 이동 경고 + 변경 블록 · 위치 · 변수 · 연관."""
+    g.append(R(x - 4, y - 2, w + 8, 26, r=6, fill="#FFF5F5", stroke="#FEB2B2"))
+    g.append(f'<circle cx="{x + 11}" cy="{y + 11}" r="6" fill="{RED}"/>')
+    g.append(f'<path d="M {x + 8},{y + 11} h 6" stroke="#FFFFFF" stroke-width="2"/>')
+    g.append(TC(x + 23, y + 11, "끊어진 이동 1건 — 배포 전 수정 필요", size=12.5,
+                weight="700", fill=RED, anchor="start"))
+    g.append(TM(x + w - 6, y + 15, "W_보험금.xml 00001234 → W_인증.xml 00000400",
+                size=11, fill="#9B2C2C", anchor="end"))
+    y += 26
     g.append(T(x, y + 17, "W_보험금청구.xml", size=14, weight="700",
                fill=N["ink"]))
     cx = x + est_w("W_보험금청구.xml", 14) + 12
