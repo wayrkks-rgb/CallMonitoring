@@ -378,30 +378,33 @@ def esc(s):
 
 
 def est_w(s, size):
-    """글자 폭 어림값.
+    """글자 폭 어림값 (나눔고딕 실측 기준).
 
-    숫자와 % 를 다른 글자와 같은 폭으로 잡으면 '100%' 같은 큰 수치에서
-    폭이 모자라 화살표와 겹친다. 글자 종류별로 나눠서 본다.
+    종류별로 실제 폭을 재서 계수를 잡았다. 계수가 크면 칩·배지가 글자보다
+    헐렁해 보이고, 작으면 글자가 도형 밖으로 나간다.
     """
+    k = {" ": 0.28, "·": 0.17, "→": 0.90, "%": 0.87}
     w = 0.0
     for ch in s:
-        if ord(ch) > 0x2000:            # 한글·전각 기호
-            k = 1.0
-        elif ch == "%":
-            k = 0.90
+        if ch in k:
+            f = k[ch]
+        elif ord(ch) > 0x2000:          # 한글 · 전각 기호
+            f = 0.94
         elif ch.isdigit():
-            k = 0.58
+            f = 0.60
         elif ch.isupper():
-            k = 0.64
+            f = 0.59
+        elif ch.isalpha():
+            f = 0.48
         else:
-            k = 0.52
-        w += size * k
+            f = 0.45
+        w += size * f
     return w
 
 
 def T(x, y, s, size=15, fill=None, weight="400", anchor="start",
       spacing=None, keep=False, ghost=None):
-    """텍스트 한 줄. 빈 버전에서는 생략(또는 자리 표시)한다.
+    """텍스트 한 줄 (y 는 기준선). 빈 버전에서는 생략(또는 자리 표시)한다.
 
     keep=True 는 문구가 아니라 틀의 일부인 것(①②③ 같은 번호)이라
     빈 버전에서도 그대로 남긴다.
@@ -447,9 +450,9 @@ def top_round(x, y, w, h, r, fill):
 
 def pill(x, y, label, color, soft):
     """섹션 라벨 (작은 알약). 빈 버전에서는 테두리만 남는다."""
-    w = 26 + int(len(label) * 15.5)
-    out = [R(x, y, w, 30, r=15, fill=soft, stroke=color, sw=1),
-           TC(x + w / 2, y + 15, label, size=15, fill=color, weight="700")]
+    w = 22 + est_w(label, 15)
+    out = [R(x, y, w, 27, r=13.5, fill=soft, stroke=color, sw=1),
+           TC(x + w / 2, y + 13.5, label, size=15, fill=color, weight="700")]
     return "".join(out), w
 
 
@@ -457,9 +460,9 @@ def tag(x, y, label, color, soft, border):
     """작은 강조 꼬리표 (오른쪽 정렬로 쓴다). 오른쪽 끝 x 기준."""
     if not label:
         return ""
-    w = 22 + est_w(label, 12.5)
-    out = [R(x - w, y, w, 24, r=12, fill=soft, stroke=border, sw=1),
-           TC(x - w / 2, y + 12, label, size=12.5, fill=color, weight="700")]
+    w = 17 + est_w(label, 12.5)
+    out = [R(x - w, y, w, 22, r=11, fill=soft, stroke=border, sw=1),
+           TC(x - w / 2, y + 11, label, size=12.5, fill=color, weight="700")]
     return "".join(out)
 
 
@@ -487,10 +490,10 @@ def big_arrow(cx, cy, color):
 
 def chip_left(x, y, label, color, soft, border, size=13.5, minw=150):
     """왼쪽 기준의 작은 칩. 빈 버전에서는 테두리만 남는다."""
-    w = max(minw, 28 + est_w(label, size))
-    return "".join([R(x, y, w, 32, r=16, fill=soft, stroke=border, sw=1),
-                    TC(x + 14, y + 16, label, size=size, fill=color, weight="700",
-                       anchor="start")])
+    w = max(minw, 22 + est_w(label, size))
+    return "".join([R(x, y, w, 28, r=14, fill=soft, stroke=border, sw=1),
+                    TC(x + 11, y + 14, label, size=size, fill=color,
+                       weight="700", anchor="start")])
 
 
 def drop(cx, y1, y2, color):
@@ -750,7 +753,7 @@ def build_effect():
     g.append(T(M + 36 + est_w(QUANT_LABEL, 14) + 30, 156, QUANT_CAPTION,
                size=13.5, fill=N["mute"]))
 
-    py, rh = 178, 92
+    py, rh = 178, 84
     g.append(R(M, py, W - 2 * M, 14 + rh * len(QUANT) + 14, r=13,
                fill=N["soft"], stroke=N["line"], sw=1))
 
@@ -771,9 +774,9 @@ def build_effect():
         g.append(T(ix + 46, ry + 62, q["note"], size=12, fill=N["mute"]))
 
         # 배지 폭은 글자에 맞춰 늘린다 ('반영 오류 0건' 처럼 긴 문구 대비)
-        gw = max(124, est_w(q["gain"], 14) + 28)
+        gw = est_w(q["gain"], 14) + 22
         gx = W - M - 22 - gw
-        g.append(R(gx, ry + 31, gw, 30, r=15, fill=N["teal_soft"],
+        g.append(R(gx, ry + 33, gw, 26, r=13, fill=N["teal_soft"],
                    stroke=N["teal_line"], sw=1))
         g.append(TC(gx + gw / 2, ry + 46, q["gain"], size=14, weight="700",
                     fill=N["teal_dk"]))
@@ -982,7 +985,7 @@ def build_flow():
     x0 = M
     x1, x2, x3 = x0 + c0, x0 + c0 + c1, W - M
     c2 = x3 - x2
-    ty, hh, rh = 128, 46, 124
+    ty, hh, rh = 128, 42, 112
     tbl_h = hh + rh * len(ROWS)
 
     g.append(R(x0, ty, x3 - x0, tbl_h, r=12, fill=N["page"],
@@ -1015,12 +1018,12 @@ def build_flow():
                      f'stroke="{N["line"]}" stroke-width="1"/>')
 
         # 단계
-        g.append(f'<circle cx="{x0 + 34}" cy="{ry + rh / 2}" r="16" '
+        g.append(f'<circle cx="{x0 + 32}" cy="{ry + rh / 2}" r="14" '
                  f'fill="{N["navy"]}"/>')
-        g.append(TC(x0 + 34, ry + rh / 2, row["no"], size=15, weight="700",
+        g.append(TC(x0 + 32, ry + rh / 2, row["no"], size=14, weight="700",
                     fill="#FFFFFF", keep=True))
-        g.append(TC(x0 + 60, ry + rh / 2, row["step"], size=15, weight="700",
-                    anchor="start", fill=N["ink"]))
+        g.append(TC(x0 + 54, ry + rh / 2, row["step"], size=14.5,
+                    weight="700", anchor="start", fill=N["ink"]))
 
         # 개선 전
         for j, ln in enumerate(row["before"]):
@@ -1030,22 +1033,22 @@ def build_flow():
             g.append(T(x1 + 34, ry + 34 + j * 24, ln[1:] if hi else ln,
                        size=13.5, weight="700" if hi else "400",
                        fill=N["amber"] if hi else N["sub"]))
-        iw = 24 + est_w(row["issue"], 12.5)
-        g.append(R(x1 + 22, ry + rh - 46, iw, 28, r=14,
+        iw = 18 + est_w(row["issue"], 12.5)
+        g.append(R(x1 + 22, ry + rh - 40, iw, 25, r=12.5,
                    fill=N["amber_soft"], stroke=N["amber_line"]))
-        g.append(TC(x1 + 22 + iw / 2, ry + rh - 32, row["issue"], size=12.5,
+        g.append(TC(x1 + 22 + iw / 2, ry + rh - 27.5, row["issue"], size=12.5,
                     weight="700", fill=N["amber"]))
 
         # 개선 후
-        gw = 26 + est_w(row["gain"], 13)
-        gx = x3 - 22 - gw
+        gw = 20 + est_w(row["gain"], 13)
+        gx = x3 - 20 - gw
         for j, ln in enumerate(row["after"]):
             g.append(f'<path d="M {x2 + 24},{ry + 34 + j * 24 - 4} h 8" '
                      f'stroke="{N["teal_dk"]}" stroke-width="2" '
                      f'stroke-linecap="round"/>')
             g.append(T(x2 + 40, ry + 34 + j * 24, ln, size=13.5, weight="700",
                        fill=N["ink"]))
-        g.append(R(gx, ry + rh / 2 - 16, gw, 32, r=16, fill=N["teal_dk"]))
+        g.append(R(gx, ry + rh / 2 - 14, gw, 28, r=14, fill=N["teal_dk"]))
         g.append(TC(gx + gw / 2, ry + rh / 2, row["gain"], size=13,
                     weight="700", fill="#FFFFFF"))
 
