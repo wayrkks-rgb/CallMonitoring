@@ -147,10 +147,16 @@ QUANT = [
         "note": "※ 변경 블록 40개 · 신규 시나리오 2개 추가 기준",
     },
     {
-        "no": "③", "title": "시나리오 사전 검증 전후 재배포 비율",
-        "before": "25%", "after": "0%", "gain": "재배포 0건",
-        "note": "※ 적용 전(~'26.08) SR 20건 중 5건 재배포 → "
-                "적용 후('26.09) SR 5건 중 0건",
+        "no": "③", "title": "오류 소스 운영 반영 비율",
+        "before": "25%", "after": "0%", "gain": "재배포 5건 예방",
+        "note": "※ '26년 SR 25건 중 운영 검증 오류 재배포 5건 — "
+                "적용 전(~'26.08) 20건 중 5건 → 적용 후('26.09) 5건 중 0건",
+    },
+    {
+        "no": "④", "title": "연관 시나리오 영향 사전 식별",
+        "before": "0건", "after": "○건", "gain": "연쇄 오류 예방",
+        "note": "※ 변경 블록을 다른 시나리오가 호출하는 경우 배포 전 자동 표시"
+                " ('26.09 배포 기준)",
     },
 ]
 
@@ -176,7 +182,7 @@ QUAL = [
     },
 ]
 
-E_SUMMARY = ("확인 시간 10분 이내 · 재배포 0건 — "
+E_SUMMARY = ("오류 소스 운영 반영 0건 · 연관 영향 배포 전 식별 — "
              "담당자 경험에 의존하던 판단을 시스템 확인 절차로 전환")
 E_FOOTER_L = "※ 소요 시간은 동일 업무 기준의 구축 전후 비교값"
 E_FOOTER_R = "향후 : 채널 상태 기반 자동 알림 · 배포 승인 절차와 변경 검증 연계"
@@ -338,7 +344,7 @@ CMP = [
         "sub": "원인 확인 30분 → 5분",
     },
     {
-        "no": "3", "kind": "안정성", "title": ["재배포", "비율"],
+        "no": "3", "kind": "예방", "title": ["오류 소스", "운영 반영"],
         "desc": ["잘못된 소스가", "운영에 나가는지"],
         "raw": ["W_보험금청구.xml   SR-A 수정분",
                 "W_보험금청구.xml   SR-B 수정분 (다음 배포)",
@@ -347,13 +353,14 @@ CMP = [
                 "→ 한 파일에 두 SR 이 섞인 채 배포"],
         "pain": "혼재 · 누락을 운영 반영 후에야 발견",
         "mock": "redeploy",
-        "big": "25% → 0%", "big_label": "재배포 비율",
-        "sub": "적용 후 SR 5건 재배포 0건",
+        "big": "25% → 0%", "big_label": "오류 소스 운영 반영 비율",
+        "sub": "재배포 5건 예방",
     },
 ]
 
 C_NOTE = "원본을 직접 뒤지는 확인에서, 시스템이 정리한 결과를 먼저 보는 확인으로 전환"
-C_FOOTER_L = "※ 소요 시간은 동일 업무 기준 구축 전후 비교값 · 재배포 비율은 적용 전(~'26.08) SR 20건 / 적용 후('26.09) SR 5건 기준"
+C_FOOTER_L = ("※ 소요 시간은 동일 업무 기준 구축 전후 비교값 · 운영 반영 비율은 "
+              "'26년 SR 25건 (적용 전 ~'26.08 20건 / 적용 후 '26.09 5건) 기준")
 
 ASIS_RESULT = "변경 범위를 사람의 기억과 육안 대조로 확인 — 놓친 부분은 운영 반영 후에야 드러남"
 TOBE_RESULT = "영향 범위 · 변경분 · 혼재 여부를 배포 전에 화면으로 확인 — 장애는 지점을 먼저 제시"
@@ -813,51 +820,51 @@ def build_effect():
     g.append(T(M + 36 + est_w(QUANT_LABEL, 14) + 30, 156, QUANT_CAPTION,
                size=13.5, fill=N["mute"]))
 
-    py, rh = 178, 84
-    g.append(R(M, py, W - 2 * M, 14 + rh * len(QUANT) + 14, r=13,
+    py, rh = 176, 72
+    g.append(R(M, py, W - 2 * M, 10 + rh * len(QUANT) + 10, r=13,
                fill=N["soft"], stroke=N["line"], sw=1))
 
     ix = M + 28                                   # 패널 안쪽 왼쪽
     for i, q in enumerate(QUANT):
-        ry = py + 14 + i * rh
+        ry = py + 10 + i * rh
+        mid = ry + rh / 2                         # 행의 세로 가운데
         if i:
             g.append(f'<path d="M {ix},{ry} L {W - M - 28},{ry}" '
                      f'stroke="{N["line"]}" stroke-width="1"/>')
 
-        g.append(f'<circle cx="{ix + 16}" cy="{ry + 46}" r="16" '
+        g.append(f'<circle cx="{ix + 15}" cy="{mid}" r="15" '
                  f'fill="{N["teal_soft"]}" stroke="{N["teal_line"]}" '
                  f'stroke-width="1"/>')
-        g.append(TC(ix + 16, ry + 46, q["no"], size=15, weight="700",
+        g.append(TC(ix + 15, mid, q["no"], size=14, weight="700",
                     fill=N["teal_dk"], keep=True))
-        g.append(T(ix + 46, ry + 41, q["title"], size=19, weight="700",
-                   fill=N["ink"]))
-        g.append(T(ix + 46, ry + 62, q["note"], size=12, fill=N["mute"]))
+        g.append(TC(ix + 44, mid - 10, q["title"], size=18, weight="700",
+                    fill=N["ink"], anchor="start"))
+        g.append(TC(ix + 44, mid + 13, q["note"], size=11.5, fill=N["mute"],
+                    anchor="start"))
 
-        # 배지 폭은 글자에 맞춰 늘린다 ('반영 오류 0건' 처럼 긴 문구 대비)
-        gw = est_w(q["gain"], 14) + 22
+        gw = est_w(q["gain"], 13.5) + 22
         gx = W - M - 22 - gw
-        g.append(R(gx, ry + 33, gw, 26, r=13, fill=N["teal_soft"],
+        g.append(R(gx, mid - 13, gw, 26, r=13, fill=N["teal_soft"],
                    stroke=N["teal_line"], sw=1))
-        g.append(TC(gx + gw / 2, ry + 46, q["gain"], size=14, weight="700",
+        g.append(TC(gx + gw / 2, mid, q["gain"], size=13.5, weight="700",
                     fill=N["teal_dk"]))
 
-        ax = gx - 28
-        aw = est_w(q["after"], 40)
-        # 제목과 수치가 멀리 떨어져 가운데가 비어 보이므로 점선으로 잇는다
-        lead0 = ix + 46 + max(est_w(q["title"], 19), est_w(q["note"], 12)) + 20
-        lead1 = ax - aw - 46 - est_w(q["before"], 27) - 20
+        ax = gx - 26
+        aw = est_w(q["after"], 36)
+        lead0 = ix + 44 + max(est_w(q["title"], 18), est_w(q["note"], 11.5)) + 20
+        lead1 = ax - aw - 44 - est_w(q["before"], 25) - 20
         if lead1 - lead0 > 60:
-            g.append(f'<path d="M {lead0},{ry + 46} L {lead1},{ry + 46}" '
+            g.append(f'<path d="M {lead0},{mid} L {lead1},{mid}" '
                      f'stroke="{N["line"]}" stroke-width="1.4" '
                      f'stroke-dasharray="2 6" stroke-linecap="round"/>')
-        g.append(TC(ax, ry + 46, q["after"], size=40, weight="800",
+        g.append(TC(ax, mid, q["after"], size=36, weight="800",
                     fill=N["teal_dk"], anchor="end"))
-        g.append(big_arrow(ax - aw - 22, ry + 46, N["mute"]))
-        g.append(TC(ax - aw - 46, ry + 46, q["before"], size=27, weight="700",
+        g.append(big_arrow(ax - aw - 21, mid, N["mute"]))
+        g.append(TC(ax - aw - 44, mid, q["before"], size=25, weight="700",
                     fill=N["mute"], anchor="end"))
 
     # ── 정성 (흰 바탕, 테두리 없는 3단) ──────────────────────────────
-    ql = py + 14 + rh * len(QUANT) + 14 + 40
+    ql = py + 10 + rh * len(QUANT) + 10 + 38
     g.append(R(M, ql - 8, 24, 3, r=1.5, fill=N["teal_dk"]))
     g.append(T(M + 36, ql, QUAL_LABEL, size=14, weight="700",
                fill=N["teal_dk"], spacing="2"))
@@ -866,11 +873,11 @@ def build_effect():
 
     gap = 40
     cw = (W - 2 * M - gap * 2) / 3
-    y0 = ql + 48
+    y0 = ql + 44
     for i, q in enumerate(QUAL):
         x = M + i * (cw + gap)
         px = x + 20                      # 카드 안쪽 여백
-        g.append(R(x, y0 - 16, cw, 202, r=11, fill=N["soft"],
+        g.append(R(x, y0 - 16, cw, 176, r=11, fill=N["soft"],
                    stroke=N["line"], sw=1))
         g.append(f'<circle cx="{px + 21}" cy="{y0 + 12}" r="21" '
                  f'fill="{N["teal_soft"]}"/>')
@@ -878,21 +885,21 @@ def build_effect():
                       N["teal_dk"], sw=1.7))
         g.append(T(px + 52, y0 + 18, q["title"], size=18, weight="700",
                    fill=N["ink"]))
-        g.append(R(px, y0 + 48, 34, 3, r=1.5, fill=N["teal_dk"]))
+        g.append(R(px, y0 + 42, 34, 3, r=1.5, fill=N["teal_dk"]))
         for j, ln in enumerate(q["desc"]):
-            g.append(T(px, y0 + 80 + j * 22, ln, size=14, fill=N["sub"]))
-        g.append(T(px, y0 + 126, q.get("note", ""), size=11.5, fill=N["mute"]))
-        g.append(T(px, y0 + 158, q.get("chip", ""), size=14, weight="700",
+            g.append(T(px, y0 + 70 + j * 21, ln, size=13.5, fill=N["sub"]))
+        g.append(T(px, y0 + 112, q.get("note", ""), size=11.5, fill=N["mute"]))
+        g.append(T(px, y0 + 140, q.get("chip", ""), size=14, weight="700",
                    fill=N["teal_dk"]))
 
     # 맨 아래 한 줄 — 장표의 결론이자 아래쪽 빈 공간을 채우는 역할
-    sy = y0 + 186 + 34
+    sy = y0 + 160 + 22
     g.append(R(M, sy, W - 2 * M, 44, r=9, fill=N["navy"]))
     g.append(icon("shield", M + 26, sy + 22, 19, N["teal"], sw=1.7))
     g.append(TC(M + 48, sy + 22, E_SUMMARY, size=13.5, weight="700",
                 fill="#FFFFFF", anchor="start", ghost=N["ghost_navy"]))
 
-    fy = sy + 74
+    fy = sy + 68
     g.append(T(M, fy, E_FOOTER_L, size=12.5, fill=N["mute"]))
     g.append(T(W - M, fy, E_FOOTER_R, size=12.5, fill=N["mute"], anchor="end"))
 
