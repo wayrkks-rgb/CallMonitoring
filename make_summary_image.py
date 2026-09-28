@@ -299,6 +299,61 @@ ROWS = [
 ASIS_LABEL, ASIS_SUB = "개선 전", "AS-IS"
 TOBE_LABEL, TOBE_SUB = "개선 후", "TO-BE"
 
+# ─────────────────────────────────────────────────────────────────────────
+#  개선 전 · 후 비교 장표 (--page compare)
+#  개선 전에 '실제로 보던 원본' 과 개선 후에 '시스템이 보여 주는 화면' 을
+#  나란히 둔다. 오른쪽 화면은 실제 기능을 기준으로 한 예시.
+# ─────────────────────────────────────────────────────────────────────────
+
+C_TITLE = "개선 전 · 후 비교"
+C_SUBTITLE = "같은 업무를 할 때 보게 되는 화면"
+C_META = "※ 개선 후 화면은 실제 기능 기준 예시"
+
+CMP = [
+    {
+        "no": "1", "title": ["배포 전", "변경 검증"],
+        "desc": ["SR 반영 전", "무엇이 바뀌었는지"],
+        "raw": ['<Node seq="00001234" type="Script">',
+                '  <Script>app.nAuthType = 1;</Script>',
+                '<Node seq="00001235" type="Branch">',
+                '  <Cond>app.nRetCode == 0</Cond>',
+                '<Node seq="00001236" type="Menu"> …'],
+        "pain": "운영본 · 수정본을 번갈아 열어 한 블록씩 대조",
+        "mock": "diff",
+        "big": "60분 → 10분", "big_label": "변경 검증 시간",
+        "sub": "재배포 25% → 0%",
+    },
+    {
+        "no": "2", "title": ["장애 · 문의", "원인 확인"],
+        "desc": ["통화가 어디서", "끊겼는지"],
+        "raw": ["10:02:11 [W_Main.dxml][00000010] End Event[ok]",
+                "10:02:13 [W_고객조회.dxml][00000342] MCI_SEND …",
+                "10:02:14 CTIInterface … Inputdigit=1",
+                "10:02:19 [W_보험금.dxml][00001234] End Event[ok]",
+                "10:02:31 TERM REASON ==> TM_USRSTOP"],
+        "pain": "수백 줄을 처음부터 읽어 끊긴 지점 판단",
+        "mock": "precheck",
+        "big": "30분 → 5분", "big_label": "원인 확인 시간",
+        "sub": "서버 10대 → 화면 1개",
+    },
+    {
+        "no": "3", "title": ["업무 구조", "파악"],
+        "desc": ["이 블록이 어느", "업무의 몇 단계인지"],
+        "raw": ["[W_보험금.dxml][00001234]",
+                "[W_보험금.dxml][00001235]",
+                "[W_인증공통.dxml][00000411]",
+                "[W_고객조회.dxml][00000342]",
+                "→ 업무 · 단계 표시 없음"],
+        "pain": "블록 번호로 업무 위치를 유추",
+        "mock": "tree",
+        "big": "2명", "big_label": "신계약 프로젝트 활용",
+        "sub": "전체 트리 PDF 일괄 제공",
+    },
+]
+
+C_NOTE = "원본을 직접 뒤지는 확인에서, 시스템이 정리한 결과를 먼저 보는 확인으로 전환"
+C_FOOTER_L = "※ 소요 시간은 동일 업무 기준 구축 전후 비교값 · 재배포 비율은 적용 전(~'26.08) SR 20건 / 적용 후('26.09) SR 5건 기준"
+
 ASIS_RESULT = "변경 범위를 사람의 기억과 육안 대조로 확인 — 놓친 부분은 운영 반영 후에야 드러남"
 TOBE_RESULT = "영향 범위 · 변경분 · 혼재 여부를 배포 전에 화면으로 확인 — 장애는 지점을 먼저 제시"
 
@@ -364,6 +419,10 @@ N = {
     "ghost":      "#E8EEF3",
     "ghost_navy": "#1D4269",
 }
+
+# 원본(XML · 로그)을 보여 줄 때 쓰는 고정폭 글꼴
+MONO = ("'NanumGothicCoding','나눔고딕코딩','D2Coding','Consolas',"
+        "'Courier New',monospace")
 
 BLANK = False        # True 면 글자를 그리지 않는다
 GUIDES = False       # True 면 빈 버전에 글자 자리를 연한 막대로 표시
@@ -1066,6 +1125,286 @@ def build_flow():
     return "".join(g)
 
 
+def TM(x, y, s, size=11.5, fill=None, weight="400", anchor="start"):
+    """고정폭 글꼴 텍스트 (원본 XML · 로그 표시용)."""
+    if not s:
+        return ""
+    if BLANK:
+        return T(x, y, s, size=size, anchor=anchor)
+    return (f'<text x="{x}" y="{y}" font-family="{MONO}" font-size="{size}" '
+            f'font-weight="{weight}" fill="{fill or C["ink"]}" '
+            f'text-anchor="{anchor}">{esc(s)}</text>')
+
+
+def chipc(x, cy, label, size, fg, bg, border=None, padx=9, h=None, mono=False):
+    """세로 가운데가 cy 인 칩. (svg, 폭) 을 돌려준다."""
+    h = h or round(size * 1.85)
+    w = est_w(label, size) + padx * 2
+    body = (TM(x + padx, cy + size * 0.33, label, size=size, fill=fg,
+               weight="700") if mono else
+            TC(x + padx, cy, label, size=size, weight="700", fill=fg,
+               anchor="start"))
+    return (R(x, cy - h / 2, w, h, r=h / 2, fill=bg, stroke=border, sw=1)
+            + body), w
+
+
+def _wrap2(text, size, avail):
+    """두 줄까지 나눈다 (가운데에 가까운 공백 기준)."""
+    if est_w(text, size) <= avail:
+        return [text]
+    sp = [i for i, ch in enumerate(text) if ch == " "]
+    if not sp:
+        return [text]
+    mid = len(text) / 2
+    k = min(sp, key=lambda i: abs(i - mid))
+    return [text[:k], text[k + 1:]]
+
+
+RED = "#C53030"
+
+
+def _mock_diff(g, x, y, w):
+    """시나리오 DIFF 결과 화면 — 변경 블록 · 업무 위치 · 변수 · 화면 · 연관."""
+    g.append(T(x, y + 17, "W_보험금청구.xml", size=14, weight="700",
+               fill=N["ink"]))
+    cx = x + est_w("W_보험금청구.xml", 14) + 12
+    c, cw_ = chipc(cx, y + 12, "변경 3", 11.5, N["amber"], N["amber_soft"],
+                   N["amber_line"])
+    g.append(c)
+    c, _ = chipc(cx + cw_ + 6, y + 12, "추가 1", 11.5, N["teal_dk"],
+                 N["teal_soft"], N["teal_line"])
+    g.append(c)
+
+    ry = y + 44
+    c, cw_ = chipc(x, ry, "00001234", 11, "#FFFFFF", N["navy"], mono=True)
+    g.append(c)
+    g.append(TC(x + cw_ + 8, ry, "본인인증 분기", size=13.5, weight="700",
+                fill=N["ink"], anchor="start"))
+    lx = x + cw_ + 8 + est_w("본인인증 분기", 13.5) + 10
+    c, _ = chipc(lx, ry, "보험금 청구 › 본인인증 STEP 3", 11.5, N["teal_dk"],
+                 N["teal_soft"], N["teal_line"])
+    g.append(c)
+
+    def row(yy, label):
+        g.append(TC(x, yy, label, size=11, weight="700", fill=N["mute"],
+                    anchor="start", spacing="1"))
+        return x + 38
+
+    ry = y + 74
+    vx = row(ry, "변수")
+    g.append(TM(vx, ry + 4, "app.nAuthType", size=12.5, fill=N["ink"]))
+    ox = vx + est_w("app.nAuthType", 12.5) * 1.02 + 12
+    c, w1 = chipc(ox, ry, "이전 1", 11.5, RED, "#FDECEC", "#F5C2C2")
+    g.append(c)
+    g.append(TC(ox + w1 + 6, ry, "→", size=13, fill=N["mute"], anchor="start"))
+    c, _ = chipc(ox + w1 + 24, ry, "변경 2", 11.5, N["teal_dk"], N["teal_soft"],
+                 N["teal_line"])
+    g.append(c)
+
+    ry = y + 102
+    sx = row(ry, "화면")
+    g.append(TC(sx, ry, "메뉴 버튼 추가", size=12.5, fill=N["sub"],
+                anchor="start"))
+    c, _ = chipc(sx + est_w("메뉴 버튼 추가", 12.5) + 8, ry, "+ 휴대폰 인증",
+                 11.5, N["teal_dk"], N["teal_soft"], N["teal_line"])
+    g.append(c)
+
+    ry = y + 130
+    rx = row(ry, "연관")
+    g.append(TC(rx, ry, "W_Main.xml 에서 호출 · 함께 확인 필요", size=12.5,
+                fill=N["sub"], anchor="start"))
+    lab = "트리에서 위치 보기"
+    lw = est_w(lab, 11.5) + 18
+    c, _ = chipc(x + w - lw, ry, lab, 11.5, N["teal_dk"], N["page"],
+                 N["teal_dk"])
+    g.append(c)
+
+
+def _mock_precheck(g, x, y, w):
+    """로그 조회 사전 노티 — 종료 유형 · 중단 위치 · 화면 진행 · FLOW 연결."""
+    c, cw_ = chipc(x, y + 12, "고객 중단", 11.5, RED, "#FDECEC", "#F5C2C2")
+    g.append(c)
+    c, cw2 = chipc(x + cw_ + 6, y + 12, "보이는ARS", 11.5, "#4C51BF",
+                   "#EEF0FF", "#C9CDF7")
+    g.append(c)
+    g.append(TC(x + cw_ + cw2 + 16, y + 12, "사전 노티", size=11,
+                fill=N["mute"], anchor="start"))
+
+    ry = y + 46
+    loc = "보험금 청구 › 본인인증 STEP 3"
+    g.append(TC(x, ry, loc, size=15, weight="700", fill=N["teal_dk"],
+                anchor="start"))
+    g.append(TC(x + est_w(loc, 15) + 6, ry, "에서 고객 중단(끊음)", size=15,
+                weight="700", fill=N["ink"], anchor="start"))
+
+    ry = y + 82
+    g.append(TC(x, ry, "화면 진행", size=11, weight="700", fill=N["mute"],
+                anchor="start", spacing="1"))
+    cx = x + 62
+    steps = ["청구 안내", "본인인증", "휴대폰 입력"]
+    for i, stp in enumerate(steps):
+        last = i == len(steps) - 1
+        c, cw_ = chipc(cx, ry, stp, 12, "#FFFFFF" if last else N["sub"],
+                       N["teal_dk"] if last else N["soft"],
+                       None if last else N["line"])
+        g.append(c)
+        cx += cw_
+        if not last:
+            g.append(TC(cx + 9, ry, "›", size=15, weight="700", fill=N["mute"]))
+            cx += 18
+
+    ry = y + 120
+    g.append(TC(x, ry, "종료 블록", size=11, weight="700", fill=N["mute"],
+                anchor="start", spacing="1"))
+    g.append(TM(x + 62, ry + 4, "W_보험금.dxml / 00001234", size=12,
+                fill=N["ink"]))
+    lab2, lab1 = "종료 단계 보기", "시작 단계부터 보기"
+    w2 = est_w(lab2, 11.5) + 18
+    w1 = est_w(lab1, 11.5) + 18
+    c, _ = chipc(x + w - w2, ry, lab2, 11.5, "#FFFFFF", N["teal_dk"])
+    g.append(c)
+    c, _ = chipc(x + w - w2 - 6 - w1, ry, lab1, 11.5, N["teal_dk"], N["page"],
+                 N["teal_dk"])
+    g.append(c)
+
+
+def _mock_tree(g, x, y, w):
+    """업무 FLOW 뷰어 — 업무 › 단계 › 블록, 호스트 전문까지."""
+    g.append(TC(x, y + 12, "보험금 청구", size=15, weight="700",
+                fill=N["ink"], anchor="start"))
+    g.append(TC(x + est_w("보험금 청구", 15) + 10, y + 12, "업무 전체 흐름",
+                size=11.5, fill=N["mute"], anchor="start"))
+    lab = "PDF로 저장"
+    lw = est_w(lab, 11.5) + 18
+    c, _ = chipc(x + w - lw, y + 12, lab, 11.5, N["teal_dk"], N["page"],
+                 N["teal_dk"])
+    g.append(c)
+
+    tx = x + 10
+    g.append(f'<path d="M {tx},{y + 26} V {y + 128}" stroke="{N["line"]}" '
+             f'stroke-width="2"/>')
+    items = [(44, "본인확인", "STEP 1–2", False),
+             (72, "본인인증", "STEP 3", True),
+             (128, "청구 접수", "STEP 4", False)]
+    for dy, nm, stp, hit in items:
+        yy = y + dy
+        if hit:
+            g.append(R(tx + 8, yy - 13, w - 18, 26, r=6, fill=N["teal_soft"],
+                       stroke=N["teal_line"]))
+        g.append(f'<path d="M {tx},{yy} h 14" stroke="{N["line"]}" '
+                 f'stroke-width="2"/>')
+        g.append(TC(tx + 22, yy, nm, size=13.5, weight="700",
+                    fill=N["teal_dk"] if hit else N["ink"], anchor="start"))
+        g.append(TC(tx + 22 + est_w(nm, 13.5) + 10, yy, stp, size=11.5,
+                    weight="700", fill=N["mute"], anchor="start"))
+        if hit:
+            c, _ = chipc(x + w - 96, yy, "00001234", 11, "#FFFFFF", N["navy"],
+                         mono=True)
+            g.append(c)
+    yy = y + 100
+    g.append(TC(tx + 34, yy, "호스트 전문", size=11, weight="700",
+                fill=N["mute"], anchor="start", spacing="1"))
+    g.append(TM(tx + 34 + 70, yy + 4, "HLI_AUTH01", size=12, fill=N["ink"]))
+    g.append(TC(tx + 34 + 70 + est_w("HLI_AUTH01", 12) * 1.02 + 10, yy,
+                "입력 3 · 출력 5", size=11.5, fill=N["sub"], anchor="start"))
+
+
+def build_compare():
+    """개선 전 · 후 비교 — 원본(개선 전) 과 시스템 화면(개선 후) 을 마주 놓는다."""
+    g = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+         f'viewBox="0 0 {W} {H}">',
+         R(0, 0, W, H, r=0, fill=N["page"])]
+
+    g.append(R(0, 0, W, 100, r=0, fill=N["navy"]))
+    g.append(T(M, 52, C_TITLE, size=29, weight="700", fill=N["on_navy"],
+               ghost=N["ghost_navy"]))
+    g.append(T(M, 78, C_SUBTITLE, size=13.5, fill=N["on_navy_sub"],
+               ghost=N["ghost_navy"]))
+    g.append(T(W - M, 66, C_META, size=12.5, fill=N["teal"], anchor="end",
+               ghost=N["ghost_navy"]))
+
+    LX, LW = M, 176
+    AX, AW = LX + LW + 12, 436
+    BX = AX + AW + 40
+    EW = 236
+    EX = W - M - EW
+    BW = EX - 12 - BX
+    bh, gap = 214, 12
+
+    for i, it in enumerate(CMP):
+        by = 116 + i * (bh + gap)
+
+        # 왼쪽 : 무엇을 하는 일인가
+        g.append(R(LX, by, LW, bh, r=12, fill=N["navy"]))
+        g.append(f'<circle cx="{LX + 32}" cy="{by + 36}" r="14" '
+                 f'fill="{N["teal"]}"/>')
+        g.append(TC(LX + 32, by + 36, it["no"], size=14, weight="700",
+                    fill=N["navy"], keep=True))
+        for j, ln in enumerate(it["title"]):
+            g.append(T(LX + 18, by + 90 + j * 26, ln, size=20, weight="700",
+                       fill="#FFFFFF", ghost=N["ghost_navy"]))
+        for j, ln in enumerate(it["desc"]):
+            g.append(T(LX + 18, by + 158 + j * 19, ln, size=12.5,
+                       fill=N["on_navy_sub"], ghost=N["ghost_navy"]))
+
+        # 가운데 왼쪽 : 개선 전에 실제로 보던 원본
+        g.append(R(AX, by, AW, bh, r=12, fill="#F3F4F6", stroke=N["line"]))
+        c, _ = chipc(AX + 16, by + 22, "개선 전", 12, N["sub"], "#E2E8F0")
+        g.append(c)
+        g.append(TC(AX + 90, by + 22, "직접 보던 원본", size=11.5,
+                    fill=N["mute"], anchor="start"))
+        g.append(R(AX + 16, by + 42, AW - 32, 112, r=8, fill="#FFFFFF",
+                   stroke=N["line"]))
+        for j, ln in enumerate(it["raw"]):
+            g.append(TM(AX + 28, by + 64 + j * 20, ln, size=11.5,
+                        fill="#8A94A6"))
+        pw = est_w("! " + it["pain"], 12.5) + 28
+        g.append(R(AX + 16, by + bh - 46, pw, 30, r=15,
+                   fill=N["amber_soft"], stroke=N["amber_line"]))
+        g.append(TC(AX + 30, by + bh - 31, "! " + it["pain"], size=12.5,
+                    weight="700", fill=N["amber"], anchor="start"))
+
+        # 화살표
+        ax = AX + AW + 20
+        g.append(f'<path d="M {ax - 11},{by + bh / 2 - 16} L {ax + 7},{by + bh / 2} '
+                 f'L {ax - 11},{by + bh / 2 + 16} Z" fill="{N["teal_dk"]}"/>')
+
+        # 가운데 오른쪽 : 개선 후 시스템이 보여 주는 화면
+        g.append(R(BX, by, BW, bh, r=12, fill=N["page"],
+                   stroke=N["teal_line"], sw=1.8))
+        c, _ = chipc(BX + 16, by + 22, "개선 후", 12, "#FFFFFF", N["teal_dk"])
+        g.append(c)
+        g.append(TC(BX + 90, by + 22, "시스템이 보여 주는 화면", size=11.5,
+                    fill=N["mute"], anchor="start"))
+        mx, my, mw = BX + 20, by + 44, BW - 40
+        {"diff": _mock_diff, "precheck": _mock_precheck,
+         "tree": _mock_tree}[it["mock"]](g, mx, my, mw)
+
+        # 오른쪽 : 효과
+        g.append(R(EX, by, EW, bh, r=12, fill=N["teal_dk"]))
+        g.append(TC(EX + EW / 2, by + 50, it["big_label"], size=12.5,
+                    weight="700", fill="#BFF3EA"))
+        g.append(TC(EX + EW / 2, by + 96, it["big"], size=31, weight="800",
+                    fill="#FFFFFF"))
+        sw_ = est_w(it["sub"], 13) + 26
+        g.append(R(EX + EW / 2 - sw_ / 2, by + 146, sw_, 30, r=15,
+                   fill="#FFFFFF", opacity=None) if False else
+                 f'<rect x="{EX + EW / 2 - sw_ / 2}" y="{by + 146}" width="{sw_}" '
+                 f'height="30" rx="15" fill="#FFFFFF" fill-opacity="0.16"/>')
+        g.append(TC(EX + EW / 2, by + 161, it["sub"], size=13, weight="700",
+                    fill="#FFFFFF"))
+
+    ny = 116 + 3 * (bh + gap) + 6
+    g.append(R(M, ny, W - 2 * M, 42, r=9, fill=N["navy"]))
+    g.append(icon("shield", M + 26, ny + 21, 19, N["teal"], sw=1.7))
+    g.append(TC(M + 48, ny + 21, C_NOTE, size=14, weight="700",
+                fill="#FFFFFF", anchor="start", ghost=N["ghost_navy"]))
+    g.append(T(M, ny + 66, C_FOOTER_L, size=11.5, fill=N["mute"]))
+
+    g.append('</svg>')
+    return "".join(g)
+
+
 def build_svg(page="overview"):
     if page == "effect":
         return build_effect()
@@ -1073,6 +1412,8 @@ def build_svg(page="overview"):
         return build_roadmap()
     if page == "flow":
         return build_flow()
+    if page == "compare":
+        return build_compare()
     return build_overview()
 
 
@@ -1112,7 +1453,8 @@ def main():
     ap.add_argument("--only", choices=["full", "blank"], default=None,
                     help="문구 있는 것 / 빈 것 중 한 쪽만 생성 (기본은 둘 다)")
     ap.add_argument("--page",
-                    choices=["overview", "flow", "effect", "roadmap", "all"],
+                    choices=["overview", "flow", "compare", "effect",
+                             "roadmap", "all"],
                     default="all",
                     help="overview=구축 요약, flow=개선 전후 흐름, "
                          "effect=기대효과, roadmap=향후 계획 (기본은 전부)")
@@ -1131,7 +1473,8 @@ def main():
     base, ext = os.path.splitext(args.out)
     ext = ext or ".svg"
 
-    pages = (["overview", "flow", "effect", "roadmap"] if args.page == "all"
+    pages = (["overview", "flow", "compare", "effect", "roadmap"]
+             if args.page == "all"
              else [args.page])
     for page in pages:
         stem = base if page == "overview" else base + "_" + page
