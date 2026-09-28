@@ -627,84 +627,88 @@ def build_overview():
 
 
 def build_effect():
-    """기대효과 장표 — 짙은 남색 위의 정량 성적표 + 흰 바탕의 정성 효과."""
+    """기대효과 장표 — 머리글만 짙은 남색, 정량은 밝은 패널, 정성은 흰 바탕."""
     g = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
          f'viewBox="0 0 {W} {H}">',
          R(0, 0, W, H, r=0, fill=N["page"])]
 
-    # ── 위쪽 : 정량 (짙은 남색 바탕) ─────────────────────────────────
-    HERO = 430
-    g.append(R(0, 0, W, HERO, r=0, fill=N["navy"]))
-    g.append(T(M, 74, E_TITLE, size=34, weight="700", fill=N["on_navy"],
+    # ── 머리글 (얇은 남색 띠) ────────────────────────────────────────
+    g.append(R(0, 0, W, 118, r=0, fill=N["navy"]))
+    g.append(T(M, 62, E_TITLE, size=30, weight="700", fill=N["on_navy"],
                ghost=N["ghost_navy"]))
-    g.append(T(M, 102, E_SUBTITLE, size=15, fill=N["on_navy_sub"],
+    g.append(T(M, 90, E_SUBTITLE, size=14, fill=N["on_navy_sub"],
                ghost=N["ghost_navy"]))
-    g.append(T(W - M, 92, E_META, size=13.5, fill=N["on_navy_sub"],
+    g.append(T(W - M, 76, E_META, size=13, fill=N["on_navy_sub"],
                anchor="end", ghost=N["ghost_navy"]))
 
-    g.append(R(M, 143, 24, 3, r=1.5, fill=N["teal"]))
-    g.append(T(M + 36, 151, QUANT_LABEL, size=14, weight="700",
-               fill=N["teal"], spacing="2", ghost=N["ghost_navy"]))
-    g.append(T(M + 36 + est_w(QUANT_LABEL, 14) + 30, 151, QUANT_CAPTION,
-               size=13.5, fill=N["on_navy_sub"], ghost=N["ghost_navy"]))
+    # ── 정량 (밝은 패널 위의 성적표) ─────────────────────────────────
+    g.append(R(M, 148, 24, 3, r=1.5, fill=N["teal_dk"]))
+    g.append(T(M + 36, 156, QUANT_LABEL, size=14, weight="700",
+               fill=N["teal_dk"], spacing="2"))
+    g.append(T(M + 36 + est_w(QUANT_LABEL, 14) + 30, 156, QUANT_CAPTION,
+               size=13.5, fill=N["mute"]))
 
-    rh = 76
+    py, rh = 182, 104
+    g.append(R(M, py, W - 2 * M, 20 + rh * len(QUANT) + 20, r=14,
+               fill=N["soft"], stroke=N["line"], sw=1))
+
+    ix = M + 28                                   # 패널 안쪽 왼쪽
     for i, q in enumerate(QUANT):
-        ry = 176 + i * rh
+        ry = py + 20 + i * rh
         if i:
-            g.append(f'<path d="M {M},{ry} L {W - M},{ry}" '
-                     f'stroke="{N["navy_soft"]}" stroke-width="1"/>')
+            g.append(f'<path d="M {ix},{ry} L {W - M - 28},{ry}" '
+                     f'stroke="{N["line"]}" stroke-width="1"/>')
 
-        g.append(f'<circle cx="{M + 20}" cy="{ry + 38}" r="16" fill="none" '
-                 f'stroke="{N["teal"]}" stroke-width="1.4"/>')
-        g.append(T(M + 20, ry + 44, q["no"], size=15, weight="700",
-                   fill=N["teal"], anchor="middle", keep=True))
-        g.append(T(M + 54, ry + 33, q["title"], size=20, weight="700",
-                   fill=N["on_navy"], ghost=N["ghost_navy"]))
-        g.append(T(M + 54, ry + 57, q["note"], size=12.5,
-                   fill=N["on_navy_sub"], ghost=N["ghost_navy"]))
+        g.append(f'<circle cx="{ix + 18}" cy="{ry + 52}" r="18" '
+                 f'fill="{N["teal_soft"]}" stroke="{N["teal_line"]}" '
+                 f'stroke-width="1"/>')
+        g.append(T(ix + 18, ry + 58, q["no"], size=16, weight="700",
+                   fill=N["teal_dk"], anchor="middle", keep=True))
+        g.append(T(ix + 52, ry + 46, q["title"], size=20, weight="700",
+                   fill=N["ink"]))
+        g.append(T(ix + 52, ry + 70, q["note"], size=12.5, fill=N["mute"]))
 
         gw = 132
-        gx = W - M - gw
-        g.append(R(gx, ry + 21, gw, 34, r=17, fill="none",
-                   stroke=N["teal"], sw=1.4))
-        g.append(T(gx + gw / 2, ry + 44, q["gain"], size=14.5, weight="700",
-                   fill=N["teal"], anchor="middle", ghost=N["ghost_navy"]))
+        gx = W - M - 28 - gw
+        g.append(R(gx, ry + 35, gw, 34, r=17, fill=N["teal_soft"],
+                   stroke=N["teal_line"], sw=1))
+        g.append(T(gx + gw / 2, ry + 58, q["gain"], size=14.5, weight="700",
+                   fill=N["teal_dk"], anchor="middle"))
 
         ax = gx - 34
         aw = est_w(q["after"], 44)
-        g.append(T(ax, ry + 52, q["after"], size=44, weight="800",
-                   fill=N["teal"], anchor="end", ghost=N["ghost_navy"]))
-        g.append(big_arrow(ax - aw - 26, ry + 38, N["on_navy_sub"]))
-        g.append(T(ax - aw - 52, ry + 50, q["before"], size=30, weight="700",
-                   fill=N["on_navy_sub"], anchor="end", ghost=N["ghost_navy"]))
+        g.append(T(ax, ry + 66, q["after"], size=44, weight="800",
+                   fill=N["teal_dk"], anchor="end"))
+        g.append(big_arrow(ax - aw - 26, ry + 52, N["mute"]))
+        g.append(T(ax - aw - 52, ry + 64, q["before"], size=30, weight="700",
+                   fill=N["mute"], anchor="end"))
 
-    # ── 아래쪽 : 정성 (흰 바탕, 테두리 없는 3단) ─────────────────────
-    g.append(R(M, 489, 24, 3, r=1.5, fill=N["teal_dk"]))
-    g.append(T(M + 36, 497, QUAL_LABEL, size=14, weight="700",
+    # ── 정성 (흰 바탕, 테두리 없는 3단) ──────────────────────────────
+    g.append(R(M, 568, 24, 3, r=1.5, fill=N["teal_dk"]))
+    g.append(T(M + 36, 576, QUAL_LABEL, size=14, weight="700",
                fill=N["teal_dk"], spacing="2"))
-    g.append(T(M + 36 + est_w(QUAL_LABEL, 14) + 30, 497, QUAL_CAPTION,
+    g.append(T(M + 36 + est_w(QUAL_LABEL, 14) + 30, 576, QUAL_CAPTION,
                size=13.5, fill=N["mute"]))
 
     gap = 40
     cw = (W - 2 * M - gap * 2) / 3
-    y0 = 528
+    y0 = 604
     for i, q in enumerate(QUAL):
         x = M + i * (cw + gap)
         if i:
             dx = x - gap / 2
-            g.append(f'<path d="M {dx},{y0 - 8} L {dx},{y0 + 250}" '
+            g.append(f'<path d="M {dx},{y0 - 8} L {dx},{y0 + 220}" '
                      f'stroke="{N["line"]}" stroke-width="1"/>')
-        g.append(f'<circle cx="{x + 34}" cy="{y0 + 34}" r="30" '
+        g.append(f'<circle cx="{x + 30}" cy="{y0 + 30}" r="27" '
                  f'fill="{N["teal_soft"]}"/>')
-        g.append(icon(q.get("icon", ""), x + 34, y0 + 34, 28,
+        g.append(icon(q.get("icon", ""), x + 30, y0 + 30, 26,
                       N["teal_dk"], sw=1.7))
-        g.append(T(x, y0 + 106, q["title"], size=20, weight="700",
+        g.append(T(x, y0 + 94, q["title"], size=20, weight="700",
                    fill=N["ink"]))
-        g.append(R(x, y0 + 124, 40, 3, r=1.5, fill=N["teal_dk"]))
+        g.append(R(x, y0 + 112, 40, 3, r=1.5, fill=N["teal_dk"]))
         for j, ln in enumerate(q["desc"]):
-            g.append(T(x, y0 + 162 + j * 24, ln, size=15, fill=N["sub"]))
-        g.append(T(x, y0 + 228, q.get("chip", ""), size=15, weight="700",
+            g.append(T(x, y0 + 148 + j * 24, ln, size=15, fill=N["sub"]))
+        g.append(T(x, y0 + 210, q.get("chip", ""), size=15, weight="700",
                    fill=N["teal_dk"]))
 
     g.append(T(M, 856, E_FOOTER_L, size=13, fill=N["mute"]))
@@ -712,6 +716,7 @@ def build_effect():
 
     g.append('</svg>')
     return "".join(g)
+
 
 
 def build_roadmap():
