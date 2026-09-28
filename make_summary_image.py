@@ -241,7 +241,7 @@ R_FOOTER_R = "2단계 완료 · 3단계 이후 단계적 적용"
 
 F_TITLE = "개선 전 · 후 업무 흐름"
 F_SUBTITLE = "ARS 시나리오 변경부터 장애 분석까지"
-F_META = "시나리오 디자이너 · OAMP 등 기존 운영 절차 변경 없음"
+F_META = "시나리오 디자이너 등 기존 개발 · 배포 절차 변경 없음"
 
 #  두 흐름을 같은 단계에 맞춰 세운다
 PHASES = ["소스 수정", "변경 검증", "운영 반영", "장애 · 문의 분석"]
@@ -251,36 +251,38 @@ TOBE_LABEL, TOBE_SUB = "개선 후", "TO-BE"
 
 ASIS = [
     {"icon": "edit", "title": "시나리오 디자이너 수정",
-     "body": ["ARS 소스(XML) 직접 수정"]},
+     "body": ["ARS 소스(XML) 직접 수정"], "tag": ""},
     {"icon": "manual", "title": "함수 단위 육안 확인",
-     "body": ["시나리오 XML 블록 내", "함수를 하나씩 열어 대조",
-              "변경 범위 · 영향 파악 곤란"]},
-    {"icon": "deploy", "title": "OAMP 운영 반영",
-     "body": ["검증 범위 확인 없이 반영"]},
+     "body": ["수정한 시나리오를 열어", "블록 내 함수를 하나씩 대조",
+              "변경 · 영향 범위 확인 불가"], "tag": "건당 60분"},
+    {"icon": "deploy", "title": "소스 적용 후 운영 검증",
+     "body": ["운영 반영 후 실제 통화로 확인", "오류 발견 시 수정 · 재배포"],
+     "tag": "3분기 재배포 4건"},
     {"icon": "manual", "title": "전체 로그 직접 분석",
      "body": ["고객 정보로 전체 로그 조회", "처음부터 끝까지 확인",
-              "중단 지점 직접 판단"]},
+              "중단 지점 직접 판단"], "tag": "건당 30분"},
 ]
 
 TOBE = [
     {"icon": "edit", "title": "시나리오 디자이너 수정", "same": True,
-     "body": ["ARS 소스(XML) 직접 수정"]},
+     "body": ["ARS 소스(XML) 직접 수정"], "tag": "기존과 동일"},
     {"icon": "diff", "title": "변경 내용 자동 비교",
-     "body": ["저장 시 두 시나리오 비교", "변경 블록 · 함수만 추출",
-              "연관 서비스 영향도 표시"]},
-    {"icon": "shield", "title": "영향도 확인 후 반영",
-     "body": ["변경 내용 확인 후 OAMP 반영", "사전 검증을 배포 절차에 편입"]},
+     "body": ["저장 시 두 시나리오 자동 비교", "변경 블록 · 함수만 추출",
+              "연관 서비스 영향 범위 표시"], "tag": "건당 10분"},
+    {"icon": "shield", "title": "영향 범위 확인 후 반영",
+     "body": ["변경 내용 · 영향 범위 확인 후 반영",
+              "운영 검증 단계 오류 사전 차단"], "tag": "9월 재배포 0건"},
     {"icon": "breakpoint", "title": "통화 흐름 요약 우선 제시",
      "body": ["통화 흐름 요약을 먼저 표시", "중단 지점 · 종료 사유 제시",
-              "해당 구간만 확인"]},
+              "해당 구간만 확인"], "tag": "건당 5분"},
 ]
 
-ASIS_RESULT = "배포 후 운영 검증 단계에서 오류 발견 · 재배포, 장애 지점 확인까지 전체 로그 분석 필요"
-TOBE_RESULT = "배포 전 변경 내용과 영향 범위 확인, 장애 지점 즉시 확인으로 확산 방지"
+ASIS_RESULT = "확인 범위가 사람에 따라 달라지고, 놓친 변경은 운영 반영 후에야 드러남"
+TOBE_RESULT = "변경 범위와 영향을 배포 전에 확인, 장애 지점은 로그를 읽기 전에 제시"
 
 F_NOTE = ("소스 수정과 운영 반영 절차는 그대로 두고 검증 · 분석 방식만 변경 "
           "— 기존 개발 · 배포 도구 교체 없음")
-F_FOOTER_L = "※ 개선 후에도 시나리오 디자이너와 OAMP 는 기존과 동일하게 사용"
+F_FOOTER_L = "※ 개선 후에도 시나리오 디자이너와 기존 배포 절차는 동일하게 사용"
 F_FOOTER_R = "변경 검증 · 장애 분석 단계만 시스템으로 대체"
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -334,6 +336,9 @@ N = {
     "mute":       "#8496A8",
     "line":       "#E3E9EF",
     "soft":       "#F2F6F9",
+    "amber":      "#B45309",          # 개선 전(불편·위험) 표시
+    "amber_soft": "#FFF8EC",
+    "amber_line": "#F6D8A8",
     "ghost":      "#E8EEF3",
     "ghost_navy": "#1D4269",
 }
@@ -941,54 +946,63 @@ def build_flow():
                    fill=N["sub"], anchor="middle"))
 
     def lane(steps, y, label, sub, tobe):
-        bh = 160
-        g.append(T(M, y + 64, label, size=18, weight="700",
+        bh = 176
+        acc = N["teal_dk"] if tobe else N["amber"]
+        g.append(T(M, y + 74, label, size=19, weight="700",
                    fill=N["teal_dk"] if tobe else N["mute"]))
-        g.append(T(M, y + 86, sub, size=12, weight="700", fill=N["mute"],
+        g.append(T(M, y + 96, sub, size=12, weight="700", fill=N["mute"],
                    spacing="1"))
         for i, st in enumerate(steps):
             x = cx0 + i * (cw + gap)
             same = st.get("same")
-            if tobe:
+            if tobe and not same:
                 g.append(R(x, y, cw, bh, r=12, fill=N["page"],
-                           stroke=N["line"] if same else N["teal_line"],
-                           sw=1 if same else 1.8))
+                           stroke=N["teal_line"], sw=1.8))
             else:
                 g.append(R(x, y, cw, bh, r=12, fill=N["soft"],
                            stroke=N["line"], sw=1))
-            ic = N["mute"] if (not tobe or same) else N["teal_dk"]
-            g.append(icon(st.get("icon", ""), x + 30, y + 34, 24, ic, sw=1.7))
-            g.append(T(x + 54, y + 42, st["title"], size=16.5, weight="700",
-                       fill=N["sub"] if not tobe else N["ink"]))
-            g.append(f'<path d="M {x + 20},{y + 60} L {x + cw - 20},{y + 60}" '
+            bar = N["mute"] if same else acc
+            g.append(R(x + 1, y + 16, 4, bh - 32, r=2, fill=bar))
+            ic = N["mute"] if same else acc
+            g.append(icon(st.get("icon", ""), x + 34, y + 36, 24, ic, sw=1.7))
+            g.append(T(x + 58, y + 44, st["title"], size=16.5, weight="700",
+                       fill=N["mute"] if same else N["ink"]))
+            g.append(f'<path d="M {x + 20},{y + 62} L {x + cw - 20},{y + 62}" '
                      f'stroke="{N["line"]}" stroke-width="1"/>')
             for j, ln in enumerate(st["body"]):
-                g.append(T(x + 20, y + 88 + j * 22, ln, size=13.5,
-                           fill=N["sub"] if tobe and not same else N["mute"]))
-            if same:
-                # 제목과 겹치지 않도록 아래쪽 오른편에 둔다
-                g.append(tag(x + cw - 16, y + bh - 42, "기존과 동일",
-                             N["mute"], N["soft"], N["line"]))
+                g.append(T(x + 20, y + 90 + j * 22, ln, size=13.5,
+                           fill=N["mute"] if same else N["sub"]))
+            # 단계별 부담/성과는 오른쪽 아래 꼬리표로. 이 줄만 훑어도 대비가 보인다
+            lab = st.get("tag", "")
+            if lab:
+                if same:
+                    g.append(tag(x + cw - 16, y + bh - 36, lab,
+                                 N["mute"], N["soft"], N["line"]))
+                elif tobe:
+                    g.append(tag(x + cw - 16, y + bh - 36, lab,
+                                 N["teal_dk"], N["teal_soft"], N["teal_line"]))
+                else:
+                    g.append(tag(x + cw - 16, y + bh - 36, lab,
+                                 N["amber"], N["amber_soft"], N["amber_line"]))
             if i < n - 1:
-                g.append(arrow_right(x + cw + gap / 2, y + bh / 2,
-                                     N["teal_dk"] if tobe else N["mute"]))
+                g.append(arrow_right(x + cw + gap / 2, y + bh / 2, acc))
         return y + bh
 
     def result(y, text, tobe):
         g.append(R(cx0, y, tw, 44, r=10,
-                   fill=N["teal_soft"] if tobe else "#EFF2F5",
-                   stroke=N["teal_line"] if tobe else N["line"], sw=1))
-        g.append(T(cx0 + 20, y + 28, ("▶  " if tobe else "·  ") + text,
+                   fill=N["teal_soft"] if tobe else N["amber_soft"],
+                   stroke=N["teal_line"] if tobe else N["amber_line"], sw=1))
+        g.append(T(cx0 + 20, y + 28, ("▶  " if tobe else "!  ") + text,
                    size=14, weight="700",
-                   fill=N["teal_dk"] if tobe else N["mute"]))
+                   fill=N["teal_dk"] if tobe else N["amber"]))
 
     # ── 개선 전 ──────────────────────────────────────────────────────
-    y1 = 206
+    y1 = 202
     lane(ASIS, y1, ASIS_LABEL, ASIS_SUB, False)
-    result(y1 + 176, ASIS_RESULT, False)
+    result(y1 + 192, ASIS_RESULT, False)
 
     # ── 두 흐름 사이 구분 ────────────────────────────────────────────
-    my = 452
+    my = 470
     g.append(f'<path d="M {M},{my} L {W - M},{my}" stroke="{N["teal_line"]}" '
              f'stroke-width="1.4" stroke-dasharray="5 6"/>')
     pw = 28 + est_w("개선 적용", 13.5)
@@ -997,12 +1011,12 @@ def build_flow():
                fill="#FFFFFF", anchor="middle"))
 
     # ── 개선 후 ──────────────────────────────────────────────────────
-    y2 = 490
+    y2 = 502
     lane(TOBE, y2, TOBE_LABEL, TOBE_SUB, True)
-    result(y2 + 176, TOBE_RESULT, True)
+    result(y2 + 192, TOBE_RESULT, True)
 
     # ── 핵심 한 줄 ───────────────────────────────────────────────────
-    ny = 786
+    ny = 790
     g.append(R(M, ny, W - 2 * M, 48, r=10, fill=N["soft"],
                stroke=N["line"], sw=1))
     g.append(icon("shield", M + 30, ny + 24, 20, N["teal_dk"], sw=1.7))
