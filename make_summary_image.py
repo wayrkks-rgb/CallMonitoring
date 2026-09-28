@@ -176,6 +176,62 @@ QUAL = [
 E_FOOTER_L = "※ 소요 시간은 동일 업무 기준의 구축 전후 비교값"
 E_FOOTER_R = "향후 : 채널 상태 기반 자동 알림 · 배포 승인 절차와 변경 검증 연계"
 
+
+# ─────────────────────────────────────────────────────────────────────────
+#  향후 계획 장표 (--page roadmap)
+# ─────────────────────────────────────────────────────────────────────────
+
+R_TITLE = "향후 계획"
+R_SUBTITLE = "ARS 운영 장애 예방 체계 단계별 고도화"
+R_META = "사람이 찾는다 → 시스템이 보여준다 → 시스템이 알린다 → 시스템이 예측한다"
+
+ROADMAP_LABEL = "단계별 고도화 계획"
+
+#   state : done(지난 단계) / now(현재) / next(예정)
+ROADMAP = [
+    {
+        "no": "1단계", "when": "과거", "state": "done", "icon": "manual",
+        "title": "수동 확인",
+        "desc": ["서버 개별 접속과 담당자", "경험에 의존한 확인"],
+        "items": ["서버별 개별 접속 후 수동 검색",
+                  "변경 내용 확인 절차 부재",
+                  "업무 구조는 담당자 기억에 의존"],
+        "key": "사람이 찾는다",
+    },
+    {
+        "no": "2단계", "when": "현재", "state": "now", "icon": "monitor",
+        "title": "통합 조회",
+        "desc": ["단일 화면에서 조회 · 비교 ·", "업무 구조 확인"],
+        "items": ["배포 전 변경 내용 자동 비교",
+                  "통화 중단 지점 자동 제시",
+                  "업무 구조 E2E 조회 · PDF 제공"],
+        "key": "시스템이 보여준다",
+    },
+    {
+        "no": "3단계", "when": "중장기", "state": "next", "icon": "bell",
+        "title": "자동 점검 및 알림",
+        "desc": ["시스템이 주기 점검 후", "담당자에게 통보"],
+        "items": ["채널 · 오류 상태 주기 자동 점검",
+                  "평시 대비 이상 판단 규칙 적용",
+                  "탐지 결과 자동 통보"],
+        "key": "시스템이 알린다",
+    },
+    {
+        "no": "4단계", "when": "장기", "state": "next", "icon": "spark",
+        "title": "예측 및 조치 연계",
+        "desc": ["이상 징후 사전 감지 후", "조치까지 연결"],
+        "items": ["누적 이력 기반 이상 패턴 예측",
+                  "배포 위험도 사전 평가",
+                  "승인 기반 조치 수행"],
+        "key": "시스템이 예측한다",
+    },
+]
+
+R_NOTE = ("3단계는 채널 상태 · 통화 종료 사유가 이미 수집 · 축적 중으로, "
+          "판단 및 알림 계층 추가만으로 구현 가능")
+R_FOOTER_L = "※ 자동 조치는 담당자 승인 후 수행을 전제로 함"
+R_FOOTER_R = "2단계 완료 · 3단계 이후 단계적 적용"
+
 # ─────────────────────────────────────────────────────────────────────────
 # 2. 레이아웃 / 색
 # ─────────────────────────────────────────────────────────────────────────
@@ -208,6 +264,29 @@ C = {
     "ghost":      "#EDF2F7",          # 빈 버전의 글자 자리 표시
 }
 
+# 기대효과 · 향후계획 장표 전용 색.
+# 구축 요약 장표와 같은 색을 쓰면 두 장이 한 장처럼 보여서, 짙은 남색 바탕에
+# 청록 강조로 따로 잡는다.
+N = {
+    "page":       "#FFFFFF",
+    "navy":       "#0F2D4A",
+    "navy_dk":    "#0A2035",
+    "navy_soft":  "#1D4269",          # 남색 위의 구분선
+    "on_navy":    "#FFFFFF",
+    "on_navy_sub": "#93AABF",
+    "teal":       "#2DD4BF",          # 짙은 바탕 위 강조
+    "teal_dk":    "#0D8B7B",          # 흰 바탕 위 강조
+    "teal_soft":  "#ECFDF8",
+    "teal_line":  "#9DE8DB",
+    "ink":        "#0F2D4A",
+    "sub":        "#51657A",
+    "mute":       "#8496A8",
+    "line":       "#E3E9EF",
+    "soft":       "#F2F6F9",
+    "ghost":      "#E8EEF3",
+    "ghost_navy": "#1D4269",
+}
+
 BLANK = False        # True 면 글자를 그리지 않는다
 GUIDES = False       # True 면 빈 버전에 글자 자리를 연한 막대로 표시
 
@@ -229,7 +308,7 @@ def est_w(s, size):
 
 
 def T(x, y, s, size=15, fill=None, weight="400", anchor="start",
-      spacing=None, keep=False):
+      spacing=None, keep=False, ghost=None):
     """텍스트 한 줄. 빈 버전에서는 생략(또는 자리 표시)한다.
 
     keep=True 는 문구가 아니라 틀의 일부인 것(①②③ 같은 번호)이라
@@ -242,7 +321,7 @@ def T(x, y, s, size=15, fill=None, weight="400", anchor="start",
             return ""
         w, h = est_w(s, size), size * 0.74
         gx = {"start": x, "middle": x - w / 2, "end": x - w}[anchor]
-        return R(gx, y - h, w, h, r=3, fill=C["ghost"])
+        return R(gx, y - h, w, h, r=3, fill=ghost or C["ghost"])
     sp = f' letter-spacing="{spacing}"' if spacing else ""
     return (f'<text x="{x}" y="{y}" font-family="{FONT}" font-size="{size}" '
             f'font-weight="{weight}" fill="{fill or C["ink"]}" '
@@ -378,6 +457,15 @@ ICONS = {
     "share": ('<circle cx="18" cy="5.6" r="2.9"/><circle cx="6" cy="12" r="2.9"/>'
               '<circle cx="18" cy="18.4" r="2.9"/>'
               '<path d="M8.6 10.6l6.8-3.6M8.6 13.4l6.8 3.6"/>'),
+    # 돋보기 — 사람이 직접 찾는 단계
+    "manual": ('<circle cx="10.4" cy="10.4" r="7"/><path d="M15.5 15.5L21 21"/>'),
+    # 종 — 자동 알림
+    "bell": ('<path d="M18.2 9a6.2 6.2 0 1 0-12.4 0c0 6-2.6 7.6-2.6 7.6h17.6'
+             'S18.2 15 18.2 9z"/><path d="M13.9 20.2a2.1 2.1 0 0 1-3.8 0"/>'),
+    # 반짝임 — 예측 · AI
+    "spark": ('<path d="M10 2.6l2 5.2 5.2 2-5.2 2-2 5.2-2-5.2-5.2-2 5.2-2z"/>'
+              '<path d="M18 14.4l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 '
+              '2.4-.9z"/>'),
 }
 
 
@@ -539,93 +627,224 @@ def build_overview():
 
 
 def build_effect():
-    """기대효과 장표 — 위는 정량(시간 단축), 아래는 정성."""
+    """기대효과 장표 — 짙은 남색 위의 정량 성적표 + 흰 바탕의 정성 효과."""
     g = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
          f'viewBox="0 0 {W} {H}">',
-         R(0, 0, W, H, r=0, fill=C["bg"])]
+         R(0, 0, W, H, r=0, fill=N["page"])]
 
-    X0 = M + 28
-    CW = W - 2 * M - 56
-    gap = 28
-    cw = (CW - gap * 2) / 3
+    # ── 위쪽 : 정량 (짙은 남색 바탕) ─────────────────────────────────
+    HERO = 430
+    g.append(R(0, 0, W, HERO, r=0, fill=N["navy"]))
+    g.append(T(M, 74, E_TITLE, size=34, weight="700", fill=N["on_navy"],
+               ghost=N["ghost_navy"]))
+    g.append(T(M, 102, E_SUBTITLE, size=15, fill=N["on_navy_sub"],
+               ghost=N["ghost_navy"]))
+    g.append(T(W - M, 92, E_META, size=13.5, fill=N["on_navy_sub"],
+               anchor="end", ghost=N["ghost_navy"]))
 
-    _head(g, E_TITLE, E_SUBTITLE, E_META)
+    g.append(R(M, 143, 24, 3, r=1.5, fill=N["teal"]))
+    g.append(T(M + 36, 151, QUANT_LABEL, size=14, weight="700",
+               fill=N["teal"], spacing="2", ghost=N["ghost_navy"]))
+    g.append(T(M + 36 + est_w(QUANT_LABEL, 14) + 30, 151, QUANT_CAPTION,
+               size=13.5, fill=N["on_navy_sub"], ghost=N["ghost_navy"]))
 
-    # ── 정량 ─────────────────────────────────────────────────────────
-    p1y, p1h = 110, 376
-    g.append(R(M, p1y, W - 2 * M, p1h, r=14, fill=C["panel"],
-               stroke=C["line"], sw=1))
-    chip, cw_ = pill(X0, p1y + 18, QUANT_LABEL, C["blue"], C["blue_soft"])
-    g.append(chip)
-    g.append(T(X0 + cw_ + 22, p1y + 38, QUANT_CAPTION, size=14, fill=C["mute"]))
-
-    cy, ch = p1y + 66, 282
+    rh = 76
     for i, q in enumerate(QUANT):
-        x = X0 + i * (cw + gap)
-        g.append(R(x, cy, cw, ch, r=12, fill=C["panel"], stroke=C["line"]))
+        ry = 176 + i * rh
+        if i:
+            g.append(f'<path d="M {M},{ry} L {W - M},{ry}" '
+                     f'stroke="{N["navy_soft"]}" stroke-width="1"/>')
 
-        g.append(f'<circle cx="{x + 38}" cy="{cy + 40}" r="19" '
-                 f'fill="{C["blue"]}"/>')
-        g.append(T(x + 38, cy + 47, q["no"], size=19, weight="700",
-                   fill="#FFFFFF", anchor="middle", keep=True))
-        g.append(T(x + 70, cy + 47, q["title"], size=18, weight="700",
-                   fill=C["ink"]))
-        g.append(f'<path d="M {x + 20},{cy + 78} L {x + cw - 20},{cy + 78}" '
-                 f'stroke="{C["line"]}" stroke-width="1"/>')
+        g.append(f'<circle cx="{M + 20}" cy="{ry + 38}" r="16" fill="none" '
+                 f'stroke="{N["teal"]}" stroke-width="1.4"/>')
+        g.append(T(M + 20, ry + 44, q["no"], size=15, weight="700",
+                   fill=N["teal"], anchor="middle", keep=True))
+        g.append(T(M + 54, ry + 33, q["title"], size=20, weight="700",
+                   fill=N["on_navy"], ghost=N["ghost_navy"]))
+        g.append(T(M + 54, ry + 57, q["note"], size=12.5,
+                   fill=N["on_navy_sub"], ghost=N["ghost_navy"]))
 
-        lx, rx = x + cw * 0.27, x + cw * 0.73
-        g.append(T(lx, cy + 116, "현 황", size=12.5, weight="700",
-                   fill=C["mute"], anchor="middle", spacing="1"))
-        g.append(T(rx, cy + 116, "개 선", size=12.5, weight="700",
-                   fill=C["blue"], anchor="middle", spacing="1"))
-        g.append(T(lx, cy + 172, q["before"], size=42, weight="700",
-                   fill=C["mute"], anchor="middle"))
-        g.append(T(rx, cy + 172, q["after"], size=52, weight="800",
-                   fill=C["blue"], anchor="middle"))
-        g.append(big_arrow(x + cw / 2, cy + 156, C["blue"]))
+        gw = 132
+        gx = W - M - gw
+        g.append(R(gx, ry + 21, gw, 34, r=17, fill="none",
+                   stroke=N["teal"], sw=1.4))
+        g.append(T(gx + gw / 2, ry + 44, q["gain"], size=14.5, weight="700",
+                   fill=N["teal"], anchor="middle", ghost=N["ghost_navy"]))
 
-        gw = 180
-        g.append(R(x + (cw - gw) / 2, cy + 200, gw, 34, r=17,
-                   fill=C["green_soft"], stroke=C["green_line"]))
-        g.append(T(x + cw / 2, cy + 223, q["gain"], size=15, weight="700",
-                   fill=C["green"], anchor="middle"))
-        g.append(T(x + cw / 2, cy + 260, q["note"], size=12.5,
-                   fill=C["mute"], anchor="middle"))
+        ax = gx - 34
+        aw = est_w(q["after"], 44)
+        g.append(T(ax, ry + 52, q["after"], size=44, weight="800",
+                   fill=N["teal"], anchor="end", ghost=N["ghost_navy"]))
+        g.append(big_arrow(ax - aw - 26, ry + 38, N["on_navy_sub"]))
+        g.append(T(ax - aw - 52, ry + 50, q["before"], size=30, weight="700",
+                   fill=N["on_navy_sub"], anchor="end", ghost=N["ghost_navy"]))
 
-    # ── 정성 ─────────────────────────────────────────────────────────
-    p2y, p2h = 502, 330
-    g.append(R(M, p2y, W - 2 * M, p2h, r=14, fill=C["panel"],
-               stroke=C["line"], sw=1))
-    chip, cw_ = pill(X0, p2y + 18, QUAL_LABEL, C["slate"], C["slate_soft"])
-    g.append(chip)
-    g.append(T(X0 + cw_ + 22, p2y + 38, QUAL_CAPTION, size=14, fill=C["mute"]))
+    # ── 아래쪽 : 정성 (흰 바탕, 테두리 없는 3단) ─────────────────────
+    g.append(R(M, 489, 24, 3, r=1.5, fill=N["teal_dk"]))
+    g.append(T(M + 36, 497, QUAL_LABEL, size=14, weight="700",
+               fill=N["teal_dk"], spacing="2"))
+    g.append(T(M + 36 + est_w(QUAL_LABEL, 14) + 30, 497, QUAL_CAPTION,
+               size=13.5, fill=N["mute"]))
 
-    cy, ch = p2y + 56, 248
+    gap = 40
+    cw = (W - 2 * M - gap * 2) / 3
+    y0 = 528
     for i, q in enumerate(QUAL):
-        x = X0 + i * (cw + gap)
-        g.append(R(x, cy, cw, ch, r=12, fill=C["panel"], stroke=C["line"]))
-
-        g.append(f'<circle cx="{x + 48}" cy="{cy + 48}" r="27" '
-                 f'fill="{C["blue_soft"]}"/>')
-        g.append(icon(q.get("icon", ""), x + 48, cy + 48, 28, C["blue"], sw=1.7))
-        g.append(T(x + 88, cy + 56, q["title"], size=18, weight="700",
-                   fill=C["ink"]))
-        g.append(f'<path d="M {x + 24},{cy + 94} L {x + cw - 24},{cy + 94}" '
-                 f'stroke="{C["line"]}" stroke-width="1"/>')
+        x = M + i * (cw + gap)
+        if i:
+            dx = x - gap / 2
+            g.append(f'<path d="M {dx},{y0 - 8} L {dx},{y0 + 250}" '
+                     f'stroke="{N["line"]}" stroke-width="1"/>')
+        g.append(f'<circle cx="{x + 34}" cy="{y0 + 34}" r="30" '
+                 f'fill="{N["teal_soft"]}"/>')
+        g.append(icon(q.get("icon", ""), x + 34, y0 + 34, 28,
+                      N["teal_dk"], sw=1.7))
+        g.append(T(x, y0 + 106, q["title"], size=20, weight="700",
+                   fill=N["ink"]))
+        g.append(R(x, y0 + 124, 40, 3, r=1.5, fill=N["teal_dk"]))
         for j, ln in enumerate(q["desc"]):
-            g.append(T(x + 28, cy + 126 + j * 24, ln, size=14.5, fill=C["sub"]))
-        g.append(chip_left(x + 24, cy + 186, q.get("chip", ""),
-                           C["blue"], C["blue_soft"], C["blue_line"]))
+            g.append(T(x, y0 + 162 + j * 24, ln, size=15, fill=N["sub"]))
+        g.append(T(x, y0 + 228, q.get("chip", ""), size=15, weight="700",
+                   fill=N["teal_dk"]))
 
-    g.append(T(M, 880, E_FOOTER_L, size=13.5, fill=C["mute"]))
-    g.append(T(W - M, 880, E_FOOTER_R, size=13.5, fill=C["mute"], anchor="end"))
+    g.append(T(M, 856, E_FOOTER_L, size=13, fill=N["mute"]))
+    g.append(T(W - M, 856, E_FOOTER_R, size=13, fill=N["mute"], anchor="end"))
+
+    g.append('</svg>')
+    return "".join(g)
+
+
+def build_roadmap():
+    """향후 계획 장표 — 4단계 타임라인."""
+    g = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+         f'viewBox="0 0 {W} {H}">',
+         R(0, 0, W, H, r=0, fill=N["page"])]
+
+    # ── 머리글 (얇은 남색 띠) ────────────────────────────────────────
+    g.append(R(0, 0, W, 118, r=0, fill=N["navy"]))
+    g.append(T(M, 62, R_TITLE, size=30, weight="700", fill=N["on_navy"],
+               ghost=N["ghost_navy"]))
+    g.append(T(M, 90, R_SUBTITLE, size=14, fill=N["on_navy_sub"],
+               ghost=N["ghost_navy"]))
+    g.append(T(W - M, 76, R_META, size=13, fill=N["teal"], anchor="end",
+               ghost=N["ghost_navy"]))
+
+    g.append(R(M, 156, 24, 3, r=1.5, fill=N["teal_dk"]))
+    g.append(T(M + 36, 164, ROADMAP_LABEL, size=14, weight="700",
+               fill=N["teal_dk"], spacing="2"))
+
+    gap = 36
+    cw = (W - 2 * M - gap * 3) / 4
+    ccy, cr = 250, 36
+
+    # 단계를 잇는 선 : 지나온 구간은 실선, 앞으로의 구간은 점선
+    for i in range(len(ROADMAP) - 1):
+        # '현재' 단계는 바깥 링이 있어 그만큼 띄운다
+        o1 = cr + (10 if ROADMAP[i]["state"] == "now" else 0)
+        o2 = cr + (10 if ROADMAP[i + 1]["state"] == "now" else 0)
+        x1 = M + i * (cw + gap) + cw / 2 + o1
+        x2 = M + (i + 1) * (cw + gap) + cw / 2 - o2
+        future = ROADMAP[i + 1]["state"] == "next"
+        dash = ' stroke-dasharray="5 6"' if future else ""
+        g.append(f'<path d="M {x1},{ccy} L {x2},{ccy}" '
+                 f'stroke="{N["teal_line"] if future else N["navy"]}" '
+                 f'stroke-width="2"{dash}/>')
+
+    cy, ch = 312, 400
+    for i, st in enumerate(ROADMAP):
+        x = M + i * (cw + gap)
+        cx = x + cw / 2
+        state = st["state"]
+        now, future = state == "now", state == "next"
+
+        # 단계 동그라미
+        if future:
+            g.append(f'<circle cx="{cx}" cy="{ccy}" r="{cr}" fill="{N["page"]}" '
+                     f'stroke="{N["teal_line"]}" stroke-width="2" '
+                     f'stroke-dasharray="5 6"/>')
+            g.append(icon(st.get("icon", ""), cx, ccy, 30, N["teal_dk"], sw=1.7))
+        else:
+            g.append(f'<circle cx="{cx}" cy="{ccy}" r="{cr}" fill="{N["navy"]}"/>')
+            g.append(icon(st.get("icon", ""), cx, ccy, 30, N["on_navy"], sw=1.7))
+        if now:
+            g.append(f'<circle cx="{cx}" cy="{ccy}" r="{cr + 7}" fill="none" '
+                     f'stroke="{N["teal"]}" stroke-width="2.5"/>')
+
+        # 단계 카드
+        if now:
+            g.append(R(x, cy, cw, ch, r=12, fill=N["page"],
+                       stroke=N["teal_dk"], sw=1.8))
+        elif future:
+            g.append(f'<rect x="{x}" y="{cy}" width="{cw}" height="{ch}" '
+                     f'rx="12" ry="12" fill="{N["page"]}" '
+                     f'stroke="{N["teal_line"]}" stroke-width="1.4" '
+                     f'stroke-dasharray="6 6"/>')
+        else:
+            g.append(R(x, cy, cw, ch, r=12, fill=N["soft"], stroke=N["line"]))
+
+        # 단계 칩
+        lbl = f'{st["no"]} · {st["when"]}'
+        cwid = 24 + est_w(lbl, 13)
+        if now:
+            g.append(R(x + 20, cy + 20, cwid, 28, r=14, fill=N["teal_dk"]))
+            g.append(T(x + 20 + cwid / 2, cy + 39, lbl, size=13, weight="700",
+                       fill="#FFFFFF", anchor="middle"))
+        else:
+            g.append(R(x + 20, cy + 20, cwid, 28, r=14,
+                       fill=N["page"] if future else "#E6ECF2",
+                       stroke=N["teal_line"] if future else None))
+            g.append(T(x + 20 + cwid / 2, cy + 39, lbl, size=13, weight="700",
+                       fill=N["teal_dk"] if future else N["sub"],
+                       anchor="middle"))
+
+        g.append(T(x + 20, cy + 94, st["title"], size=22, weight="700",
+                   fill=N["ink"] if not future else N["ink"]))
+        for j, ln in enumerate(st["desc"]):
+            g.append(T(x + 20, cy + 130 + j * 24, ln, size=14.5, fill=N["sub"]))
+        g.append(f'<path d="M {x + 20},{cy + 182} L {x + cw - 20},{cy + 182}" '
+                 f'stroke="{N["line"]}" stroke-width="1"/>')
+        for j, it in enumerate(st["items"]):
+            iy = cy + 220 + j * 34
+            g.append(f'<circle cx="{x + 26}" cy="{iy - 5}" r="2.6" '
+                     f'fill="{N["teal_dk"] if not st["state"] == "done" else N["mute"]}"/>')
+            g.append(T(x + 40, iy, it, size=14.5, fill=N["sub"]))
+
+        # 한 줄 요약 띠
+        ky = cy + 318
+        if now:
+            g.append(R(x + 20, ky, cw - 40, 46, r=10, fill=N["teal_dk"]))
+            g.append(T(cx, ky + 30, st["key"], size=17, weight="700",
+                       fill="#FFFFFF", anchor="middle"))
+        else:
+            g.append(R(x + 20, ky, cw - 40, 46, r=10,
+                       fill=N["teal_soft"] if future else "#E9EEF3",
+                       stroke=N["teal_line"] if future else None))
+            g.append(T(cx, ky + 30, st["key"], size=17, weight="700",
+                       fill=N["teal_dk"] if future else N["mute"],
+                       anchor="middle"))
+
+    # ── 근거 한 줄 ───────────────────────────────────────────────────
+    ny = 746
+    g.append(R(M, ny, W - 2 * M, 58, r=10, fill=N["teal_soft"],
+               stroke=N["teal_line"]))
+    g.append(icon("spark", M + 32, ny + 29, 22, N["teal_dk"], sw=1.7))
+    g.append(T(M + 58, ny + 35, R_NOTE, size=15, weight="700",
+               fill=N["teal_dk"]))
+
+    g.append(T(M, 856, R_FOOTER_L, size=13, fill=N["mute"]))
+    g.append(T(W - M, 856, R_FOOTER_R, size=13, fill=N["mute"], anchor="end"))
 
     g.append('</svg>')
     return "".join(g)
 
 
 def build_svg(page="overview"):
-    return build_effect() if page == "effect" else build_overview()
+    if page == "effect":
+        return build_effect()
+    if page == "roadmap":
+        return build_roadmap()
+    return build_overview()
+
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -662,10 +881,10 @@ def main():
                     help="빈 버전에 글자 들어갈 자리를 연한 막대로 표시")
     ap.add_argument("--only", choices=["full", "blank"], default=None,
                     help="문구 있는 것 / 빈 것 중 한 쪽만 생성 (기본은 둘 다)")
-    ap.add_argument("--page", choices=["overview", "effect", "both"],
-                    default="both",
-                    help="overview=구축 요약 장표, effect=기대효과 장표 "
-                         "(기본은 둘 다)")
+    ap.add_argument("--page", choices=["overview", "effect", "roadmap", "all"],
+                    default="all",
+                    help="overview=구축 요약, effect=기대효과, roadmap=향후 계획 "
+                         "(기본은 전부)")
     ap.add_argument("--png", action="store_true",
                     help="cairosvg 가 설치돼 있으면 PNG 도 함께 생성")
     ap.add_argument("--scale", type=float, default=2.0,
@@ -681,9 +900,10 @@ def main():
     base, ext = os.path.splitext(args.out)
     ext = ext or ".svg"
 
-    pages = ["overview", "effect"] if args.page == "both" else [args.page]
+    pages = (["overview", "effect", "roadmap"] if args.page == "all"
+             else [args.page])
     for page in pages:
-        stem = base if page == "overview" else base + "_effect"
+        stem = base if page == "overview" else base + "_" + page
         if args.only != "blank":
             BLANK, GUIDES = False, False
             write(stem + ext, build_svg(page), args.png, args.scale)
