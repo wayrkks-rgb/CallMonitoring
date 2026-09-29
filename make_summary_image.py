@@ -143,9 +143,10 @@ QUANT_GROUPS = {
 
 QUANT = [
     {
-        "group": "prevent", "no": "①", "title": "끊어진 이동 사전 검출",
-        "before": "0건", "after": "○건", "gain": "배포 전 차단",
-        "note": "※ 없는 시나리오 · 블록으로 가는 이동 — 운영 시나리오 전수 점검 기준",
+        "group": "prevent", "no": "①", "title": "업무 FLOW 누락 지점 검출",
+        "before": "0개", "after": "3개 업무", "gain": "잠재 장애 사전 발견",
+        "note": "※ 운영 시나리오 전수 점검 — 없는 시나리오 · 블록으로 이동해 "
+                "업무가 끊기는 지점",
     },
     {
         "group": "prevent", "no": "②", "title": "오류 소스 운영 반영 비율",
@@ -156,12 +157,7 @@ QUANT = [
     {
         "group": "contain", "no": "③", "title": "장애 원인 특정 시간",
         "before": "30분", "after": "5분", "gain": "83% 단축",
-        "note": "※ 중단 지점 · 종료 사유 자동 제시 — 서버 접속 · 로그 검색 포함",
-    },
-    {
-        "group": "contain", "no": "④", "title": "장애 1건당 영향 통화",
-        "before": "○건", "after": "○건", "gain": "피해 확산 차단",
-        "note": "※ 시간당 콜 수 × 원인 특정 시간 (업무시간 평균 기준)",
+        "note": "※ 통화 흐름 요약 · 중단 지점 · 종료 사유 자동 제시",
     },
 ]
 
@@ -187,9 +183,9 @@ QUAL = [
     },
 ]
 
-E_SUMMARY = ("배포 전 끊어진 이동 · 오류 소스 차단 — "
-             "장애 발생 시 원인 5분 내 특정으로 피해 확산 차단")
-E_FOOTER_L = "※ ○ 표시는 운영 환경에서 점검 스크립트로 확인할 값"
+E_SUMMARY = ("배포 전 업무 FLOW 누락 · 오류 소스 차단 — "
+             "장애 발생 시 원인 5분 내 특정")
+E_FOOTER_L = "※ 소요 시간은 동일 업무 기준 구축 전후 비교값"
 E_FOOTER_R = "향후 : 채널 상태 기반 자동 알림 · 배포 승인 절차와 변경 검증 연계"
 
 
@@ -316,6 +312,56 @@ TOBE_LABEL, TOBE_SUB = "개선 후", "TO-BE"
 #  나란히 둔다. 오른쪽 화면은 실제 기능을 기준으로 한 예시.
 # ─────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────
+#  현황 및 문제점 장표 (--page issues)
+#  지금 ARS 운영 구조에서 무엇이 어렵고 위험한지. 개선 전후 비교 대신 쓴다.
+# ─────────────────────────────────────────────────────────────────────────
+
+I_TITLE = "현황 및 문제점"
+I_SUBTITLE = "솔루션 기반 ARS 시나리오 운영의 구조적 한계"
+I_META = "시나리오 XML 약 740개 · ARS 7대 · AICC/VGW 3대"
+
+#  chain : 문제가 이어지는 경로. 마지막 칸이 결과(강조)
+ISSUES = [
+    {
+        "no": "1", "title": "형상관리 도구 부재",
+        "fig": "740개", "fig_label": "시나리오 XML",
+        "lines": ["솔루션 기반 제품(시나리오 디자이너) 운영으로 고객사 형상관리 연동 불가",
+                  "소스 비교 · 이력 관리 도구 없이 XML 파일을 한 개씩 대조"],
+        "chain": ["XML 약 740개", "파일 단위 개별 대조", "비교 · 검증 장시간"],
+        "impact": "배포 전 검증 품질이 담당자의 시간과 경험에 좌우",
+    },
+    {
+        "no": "2", "title": "잘못된 배포 = 즉시 대고객 장애",
+        "fig": "Critical", "fig_label": "대고객 업무 중단",
+        "lines": ["소스 형상관리가 담당자 경험과 기억에 의존",
+                  "잘못된 소스가 운영에 나가면 고객 업무에 바로 영향"],
+        "chain": ["휴대폰 인증 오류", "인증 불가", "업무 미완료", "Critical 장애"],
+        "impact": "인증 · 청구 등 핵심 단계 오류 시 고객이 업무를 끝낼 수 없음",
+    },
+    {
+        "no": "3", "title": "요건 중첩 시 소스 혼재",
+        "fig": "혼재 위험", "fig_label": "요건이 겹칠수록 증가",
+        "lines": ["프로젝트 · 신규 업무 요건이 겹치면 같은 시나리오를 동시에 수정",
+                  "이번 배포 대상이 아닌 수정분 포함 · 필요한 수정분 누락 가능"],
+        "chain": ["프로젝트 요건 + 신규 요건", "같은 시나리오 동시 수정",
+                  "혼재 · 누락 배포"],
+        "impact": "운영 반영 후에야 발견 → 재배포 · 대고객 영향",
+    },
+    {
+        "no": "4", "title": "로그 분석 부담",
+        "fig": "1,000줄+", "fig_label": "고객 1건 통화 로그",
+        "lines": ["고객 한 명의 통화 로그가 1,000줄 이상",
+                  "문제 지점을 처음부터 한 줄씩 짚어가며 확인"],
+        "chain": ["1,000줄 이상 로그", "처음부터 순서대로 추적", "원인 특정 지연"],
+        "impact": "장애 원인을 찾는 동안 대응이 늦어짐",
+    },
+]
+
+I_NOTE = ("형상관리 · 배포 검증 · 로그 분석을 모두 사람에 의존 — "
+          "작은 실수가 그대로 대고객 장애로 연결")
+I_FOOTER_L = "※ 시나리오 디자이너 : 인티큐브 ARS 시나리오 개발 솔루션"
+
 C_TITLE = "개선 전 · 후 비교"
 C_SUBTITLE = "같은 업무를 할 때 보게 되는 화면"
 C_META = "※ 개선 후 화면은 실제 기능 기준 예시"
@@ -332,7 +378,7 @@ CMP = [
                 '<Node seq="00001236" type="Menu"> …'],
         "pain": "운영본 · 수정본을 번갈아 열어 한 블록씩 대조",
         "mock": "diff",
-        "big": "○건", "big_label": "끊어진 이동 사전 검출",
+        "big": "3개 업무", "big_label": "업무 FLOW 누락 지점 검출",
         "sub": "배포 전 수정 필요 경고",
     },
     {
@@ -346,7 +392,7 @@ CMP = [
         "pain": "서버별로 접속해 수백 줄을 처음부터 읽음",
         "mock": "precheck",
         "big": "30분 → 5분", "big_label": "장애 원인 특정 시간",
-        "sub": "영향 통화 ○건 → ○건",
+        "sub": "중단 지점 · 사유 자동 제시",
     },
     {
         "no": "3", "kind": "장애 예방", "title": ["오류 소스", "운영 반영"],
@@ -825,7 +871,8 @@ def build_effect():
     g.append(T(M + 36 + est_w(QUANT_LABEL, 14) + 30, 156, QUANT_CAPTION,
                size=13.5, fill=N["mute"]))
 
-    py, rh, ggap = 176, 70, 12
+    py, ggap = 176, 14
+    rh = 88 if len(QUANT) <= 3 else 70
     n_q = len(QUANT)
     n_gap = sum(1 for i in range(1, n_q)
                 if QUANT[i]["group"] != QUANT[i - 1]["group"])
@@ -905,11 +952,11 @@ def build_effect():
 
     gap = 40
     cw = (W - 2 * M - gap * 2) / 3
-    y0 = ql + 44
+    y0 = ql + 46
     for i, q in enumerate(QUAL):
         x = M + i * (cw + gap)
         px = x + 20                      # 카드 안쪽 여백
-        g.append(R(x, y0 - 16, cw, 176, r=11, fill=N["soft"],
+        g.append(R(x, y0 - 16, cw, 200, r=11, fill=N["soft"],
                    stroke=N["line"], sw=1))
         g.append(f'<circle cx="{px + 21}" cy="{y0 + 12}" r="21" '
                  f'fill="{N["teal_soft"]}"/>')
@@ -917,15 +964,15 @@ def build_effect():
                       N["teal_dk"], sw=1.7))
         g.append(T(px + 52, y0 + 18, q["title"], size=18, weight="700",
                    fill=N["ink"]))
-        g.append(R(px, y0 + 42, 34, 3, r=1.5, fill=N["teal_dk"]))
+        g.append(R(px, y0 + 44, 34, 3, r=1.5, fill=N["teal_dk"]))
         for j, ln in enumerate(q["desc"]):
-            g.append(T(px, y0 + 70 + j * 21, ln, size=13.5, fill=N["sub"]))
-        g.append(T(px, y0 + 112, q.get("note", ""), size=11.5, fill=N["mute"]))
-        g.append(T(px, y0 + 140, q.get("chip", ""), size=14, weight="700",
+            g.append(T(px, y0 + 78 + j * 23, ln, size=14, fill=N["sub"]))
+        g.append(T(px, y0 + 126, q.get("note", ""), size=11.5, fill=N["mute"]))
+        g.append(T(px, y0 + 160, q.get("chip", ""), size=14.5, weight="700",
                    fill=N["teal_dk"]))
 
     # 맨 아래 한 줄 — 장표의 결론이자 아래쪽 빈 공간을 채우는 역할
-    sy = y0 + 160 + 22
+    sy = y0 + 184 + 24
     g.append(R(M, sy, W - 2 * M, 44, r=9, fill=N["navy"]))
     g.append(icon("shield", M + 26, sy + 22, 19, N["teal"], sw=1.7))
     g.append(TC(M + 48, sy + 22, E_SUMMARY, size=13.5, weight="700",
@@ -1208,7 +1255,7 @@ def _mock_diff(g, x, y, w):
     g.append(R(x - 4, y - 2, w + 8, 26, r=6, fill="#FFF5F5", stroke="#FEB2B2"))
     g.append(f'<circle cx="{x + 11}" cy="{y + 11}" r="6" fill="{RED}"/>')
     g.append(f'<path d="M {x + 8},{y + 11} h 6" stroke="#FFFFFF" stroke-width="2"/>')
-    g.append(TC(x + 23, y + 11, "끊어진 이동 1건 — 배포 전 수정 필요", size=12.5,
+    g.append(TC(x + 23, y + 11, "업무 FLOW 누락 1건 — 배포 전 수정 필요", size=12.5,
                 weight="700", fill=RED, anchor="start"))
     g.append(TM(x + w - 6, y + 15, "W_보험금.xml 00001234 → W_인증.xml 00000400",
                 size=11, fill="#9B2C2C", anchor="end"))
@@ -1491,6 +1538,94 @@ def build_compare():
     return "".join(g)
 
 
+def build_issues():
+    """현황 및 문제점 — 네 가지 문제를 2 x 2 로. 각 칸은 수치 · 사실 · 경로 · 영향."""
+    g = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+         f'viewBox="0 0 {W} {H}">',
+         R(0, 0, W, H, r=0, fill=N["page"])]
+
+    g.append(R(0, 0, W, 100, r=0, fill=N["navy"]))
+    g.append(T(M, 52, I_TITLE, size=29, weight="700", fill=N["on_navy"],
+               ghost=N["ghost_navy"]))
+    g.append(T(M, 78, I_SUBTITLE, size=13.5, fill=N["on_navy_sub"],
+               ghost=N["ghost_navy"]))
+    g.append(T(W - M, 66, I_META, size=12.5, fill=N["on_navy_sub"],
+               anchor="end", ghost=N["ghost_navy"]))
+
+    gap = 24
+    cw = (W - 2 * M - gap) / 2
+    ch = 316
+    acc = N["amber"]
+    for i, it in enumerate(ISSUES):
+        x = M + (i % 2) * (cw + gap)
+        y = 120 + (i // 2) * (ch + 18)
+        g.append(R(x, y, cw, ch, r=12, fill=N["page"], stroke=N["line"]))
+        g.append(R(x, y, 6, ch, r=3, fill=acc))
+
+        # 제목
+        g.append(f'<circle cx="{x + 40}" cy="{y + 40}" r="17" fill="{acc}"/>')
+        g.append(TC(x + 40, y + 40, it["no"], size=16, weight="700",
+                    fill="#FFFFFF", keep=True))
+        g.append(TC(x + 68, y + 40, it["title"], size=21, weight="700",
+                    fill=N["ink"], anchor="start"))
+
+        # 대표 수치
+        fw, fh = 176, 70
+        fx, fy = x + cw - fw - 20, y + 18
+        g.append(R(fx, fy, fw, fh, r=10, fill=N["amber_soft"],
+                   stroke=N["amber_line"]))
+        g.append(TC(fx + fw / 2, fy + 28, it["fig"], size=26, weight="800",
+                    fill=RED if it["fig"] == "Critical" else acc))
+        g.append(TC(fx + fw / 2, fy + 54, it["fig_label"], size=12,
+                    weight="700", fill=N["sub"]))
+
+        # 사실 두 줄
+        for j, ln in enumerate(it["lines"]):
+            ly = y + 122 + j * 28
+            g.append(f'<circle cx="{x + 34}" cy="{ly - 5}" r="2.6" '
+                     f'fill="{N["mute"]}"/>')
+            g.append(T(x + 46, ly, ln, size=14.5, fill=N["sub"]))
+
+        # 문제가 이어지는 경로
+        cy_ = y + 206
+        cx_ = x + 28
+        last = len(it["chain"]) - 1
+        for j, stp in enumerate(it["chain"]):
+            end = j == last
+            c, w_ = chipc(cx_, cy_, stp, 13, "#FFFFFF" if end else N["ink"],
+                          RED if end else N["soft"],
+                          None if end else N["line"], padx=12, h=32)
+            g.append(c)
+            cx_ += w_
+            if not end:
+                g.append(f'<path d="M {cx_ + 6},{cy_} h 12" stroke="{N["mute"]}" '
+                         f'stroke-width="2" stroke-linecap="round"/>')
+                g.append(f'<path d="M {cx_ + 16},{cy_ - 5} L {cx_ + 22},{cy_} '
+                         f'L {cx_ + 16},{cy_ + 5} Z" fill="{N["mute"]}"/>')
+                cx_ += 28
+
+        # 영향
+        iy = y + ch - 62
+        g.append(R(x + 20, iy, cw - 40, 42, r=9, fill=N["amber_soft"],
+                   stroke=N["amber_line"]))
+        g.append(TC(x + 36, iy + 21, "영향", size=12, weight="700",
+                    fill=acc, anchor="start", spacing="1"))
+        g.append(TC(x + 80, iy + 21, it["impact"], size=14, weight="700",
+                    fill=N["ink"], anchor="start"))
+
+    ny = 120 + 2 * (ch + 18) + 4
+    g.append(R(M, ny, W - 2 * M, 44, r=9, fill=N["navy"]))
+    g.append(f'<circle cx="{M + 26}" cy="{ny + 22}" r="8" fill="{acc}"/>')
+    g.append(TC(M + 26, ny + 22, "!", size=12, weight="800", fill="#FFFFFF",
+                keep=True))
+    g.append(TC(M + 46, ny + 22, I_NOTE, size=14, weight="700",
+                fill="#FFFFFF", anchor="start", ghost=N["ghost_navy"]))
+    g.append(T(M, ny + 70, I_FOOTER_L, size=12, fill=N["mute"]))
+
+    g.append('</svg>')
+    return "".join(g)
+
+
 def build_svg(page="overview"):
     if page == "effect":
         return build_effect()
@@ -1500,6 +1635,8 @@ def build_svg(page="overview"):
         return build_flow()
     if page == "compare":
         return build_compare()
+    if page == "issues":
+        return build_issues()
     return build_overview()
 
 
@@ -1539,8 +1676,8 @@ def main():
     ap.add_argument("--only", choices=["full", "blank"], default=None,
                     help="문구 있는 것 / 빈 것 중 한 쪽만 생성 (기본은 둘 다)")
     ap.add_argument("--page",
-                    choices=["overview", "flow", "compare", "effect",
-                             "roadmap", "all"],
+                    choices=["overview", "issues", "flow", "compare",
+                             "effect", "roadmap", "all"],
                     default="all",
                     help="overview=구축 요약, flow=개선 전후 흐름, "
                          "effect=기대효과, roadmap=향후 계획 (기본은 전부)")
@@ -1559,7 +1696,7 @@ def main():
     base, ext = os.path.splitext(args.out)
     ext = ext or ".svg"
 
-    pages = (["overview", "flow", "compare", "effect", "roadmap"]
+    pages = (["overview", "issues", "flow", "compare", "effect", "roadmap"]
              if args.page == "all"
              else [args.page])
     for page in pages:

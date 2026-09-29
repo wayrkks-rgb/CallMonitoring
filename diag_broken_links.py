@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-diag_broken_links.py — 끊어진 이동 전수 점검
+diag_broken_links.py — 업무 FLOW 누락 지점 전수 점검
 
 존재하지 않는 시나리오나 블록으로 가는 이동을 찾는다. 이런 이동이 운영에
 나가면 통화가 그 지점에서 멈추거나 오류로 끝난다.
@@ -51,15 +51,15 @@ def main(argv):
         blocks = sum(len(f["blocks"]) for f in snap.values())
         print(f"점검 대상 : {folder}")
         print(f"시나리오 {len(snap)}개 · 블록 {blocks}개")
-        _print(items, "끊어진 이동")
+        _print(items, "업무 FLOW 누락 지점")
         return 1 if items else 0
 
     old, new = argv[1], argv[2]
     r = D.diff_folders(old, new, exts=exts)
     b = r.get("broken", {})
     print(f"과거 : {old}\n운영 : {new}")
-    _print(b.get("new", []), "이번 변경으로 새로 생긴 끊어진 이동 (배포 전 수정 필요)")
-    _print(b.get("existing", []), "원래부터 있던 끊어진 이동")
+    _print(b.get("new", []), "이번 변경으로 새로 생긴 업무 FLOW 누락 지점 (배포 전 수정 필요)")
+    _print(b.get("existing", []), "원래부터 있던 업무 FLOW 누락 지점")
     return 1 if b.get("new") else 0
 
 
