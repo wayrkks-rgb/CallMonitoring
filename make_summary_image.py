@@ -144,7 +144,7 @@ QUANT_GROUPS = {
 QUANT = [
     {
         "group": "prevent", "no": "①", "title": "업무 FLOW 누락 지점 검출",
-        "before": "0개", "after": "3개 업무", "gain": "오류 지점 사전 탐지",
+        "before": "0개", "after": "3개 업무", "gain": "장애 요인 사전 차단",
         "note": "※ 운영 시나리오 전수 점검 수행 및 시나리오 누락에 의한 "
                 "오류 지점 사전 검출",
     },
