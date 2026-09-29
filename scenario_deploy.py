@@ -527,12 +527,26 @@ def _make_locator(viewer_env):
     except Exception:
         return None
 
+    # 업무 위치 인덱스는 처음 한 번만 만든다. 변경 파일마다 다시 만들면
+    # 과거 폴더가 많이 다를 때(변경 파일 수백 개) 비교가 수십 분 걸린다.
+    idx = {}
+
     def locate(page, seqs):
         if not seqs:
             return {}
         try:
-            res = STORE.locate_blocks(viewer_env, seqs, page=page)["results"]
-            return {r["seq"]: r["matches"][0] for r in res if r.get("matches")}
+            if "all" not in idx:
+                t0 = time.time()
+                idx["all"] = STORE.locator_index(viewer_env)
+                logger.info("배포 비교: 업무 위치 인덱스 %.1fs", time.time() - t0)
+            merged, pl = idx["all"], (page or "").lower()
+            out = {}
+            for sq in seqs:
+                for h in merged.get(sq) or ():
+                    if (h.get("page") or "").lower() == pl:
+                        out[sq] = h
+                        break
+            return out
         except Exception:
             return {}
     return locate
@@ -646,7 +660,11 @@ def check(force=False):
         exts = scn_exts(cfg)
         so, sto = DIFF.snapshot_folder_cached(_local_dir("old"), _snapcache("old"), exts)
         sn, stn = DIFF.snapshot_folder_cached(_local_dir("new"), _snapcache("new"), exts)
+        logger.info("배포 비교: 스냅샷 %.1fs (과거 %s · 운영 %s)",
+                    time.time() - t0, sto, stn)
         rep = DIFF.diff_snapshots(so, sn, locate=_make_locator(cfg.get("viewer_env")))
+        logger.info("배포 비교: 완료 %.1fs (변경 파일 %s개)", time.time() - t0,
+                    rep["summary"].get("files_changed"))
         rep["cached"] = False
         rep["report_version"] = DIFF.REPORT_VERSION
         rep["elapsed"] = round(time.time() - t0, 1)

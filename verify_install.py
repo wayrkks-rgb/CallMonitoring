@@ -121,6 +121,12 @@ CHECKS = [
      "끊어진 이동 전수 점검 스크립트"),
     ("diag_call_volume.py", "영향 통화",
      "시간당 콜 수 · 장애 1건당 영향 통화 계산 스크립트"),
+    ("scenario_store.py", "def locator_index",
+     "업무 위치 인덱스 1회 생성 — 없으면 과거 폴더가 많이 다를 때 비교가 수십 분"),
+    ("scenario_deploy.py", "업무 위치 인덱스",
+     "배포 비교에서 위치 인덱스 재사용 + 단계별 소요 시간 로그"),
+    ("scenario_deploy_diff.py", "inbound = {}",
+     "연관 관계 역방향 인덱스 — 없으면 변경 파일 수 x 전체 블록 만큼 반복"),
 ]
 
 

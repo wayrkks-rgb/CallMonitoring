@@ -900,9 +900,19 @@ def diff_snapshots(old, new, locate=None):
     # ── 시나리오 간 연관 관계 ──────────────────────────────
     # '이 시나리오를 건드리면 어디에 영향이 가는가'를 보여준다.
     # 배포 전 리뷰에서 가장 중요한 정보다(호출하는 쪽을 놓쳐서 장애가 난다).
+    # 파일마다 전체 블록을 다시 훑으면 (변경 파일 수 x 전체 블록) 만큼 돌아
+    # 과거 폴더가 많이 다를 때 수십 분이 걸린다. 역방향 인덱스를 한 번만 만든다.
     pidx = _page_index(new)
+    by_file = {f["file"]: f for f in new.values()}
+    inbound = {}          # 대상 시나리오(lower) → [(파일, seq, target_node)]
+    for f in new.values():
+        for b in f["blocks"].values():
+            t = (b.get("target") or "").strip().lower()
+            if t:
+                inbound.setdefault(t, []).append(
+                    (f["file"], b["seq"], (b.get("target_node") or "").strip()))
     for entry in report["files"]:
-        wf = next((new[k] for k in new if new[k]["file"] == entry["file"]), None)
+        wf = by_file.get(entry["file"])
         if not wf:
             continue
         me = os.path.splitext(entry["file"])[0].lower()
@@ -915,24 +925,15 @@ def diff_snapshots(old, new, locate=None):
                 continue
             goes.setdefault(pidx.get(t.lower(), t), set()).add(b["seq"])
 
-        # 이 파일로 넘어오는 시나리오 (다른 파일의 TargetPage 가 나를 가리킴)
-        comes = {}
-        for k, f in new.items():
-            if f["file"] == entry["file"]:
-                continue
-            for b in f["blocks"].values():
-                if (b.get("target") or "").strip().lower() == me:
-                    comes.setdefault(f["file"], set()).add(b["seq"])
-
-        # 변경된 블록을 직접 가리키는 곳 (TargetNodeId 기준)
+        # 이 파일로 넘어오는 시나리오 / 변경된 블록을 직접 가리키는 곳
         touched = {b["seq"] for b in entry["changed_blocks"]} | \
                   {b["seq"] for b in entry["added_blocks"]}
-        direct = {}
-        for k, f in new.items():
-            for b in f["blocks"].values():
-                tn = (b.get("target_node") or "").strip()
-                if tn and tn in touched and (b.get("target") or "").strip().lower() == me:
-                    direct.setdefault(f["file"], set()).add(f"{b['seq']}→{tn}")
+        comes, direct = {}, {}
+        for src, seq, tn in inbound.get(me, ()):
+            if src != entry["file"]:
+                comes.setdefault(src, set()).add(seq)
+            if tn and tn in touched:
+                direct.setdefault(src, set()).add(f"{seq}→{tn}")
 
         entry["related"] = {
             "goes_to": [{"file": f, "from_blocks": sorted(v)} for f, v in sorted(goes.items())],

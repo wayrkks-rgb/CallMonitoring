@@ -489,25 +489,47 @@ def build_locator(env, entry):
     return idx
 
 
+def locator_index(env):
+    """모든 진입점의 블록ID → 업무 위치 를 하나로 합친 인덱스 (env 캐시).
+
+    locate_blocks 가 부를 때마다 진입점 전체를 다시 합치면, 변경 파일이
+    수백 개인 배포 비교에서 같은 합치기를 수백 번 반복해 수십 분이 걸린다.
+    한 번만 합쳐 두고 재사용한다.
+    """
+    c = _get_env(env)
+    key = "loc:__all__"
+    if c.get(key) is not None:
+        return c[key]
+    merged, have = {}, {}
+    for e in get_menu_roots(env)["roots"]:
+        try:
+            loc = build_locator(env, e)
+        except Exception:
+            continue
+        for k, v in loc.items():
+            lst = merged.setdefault(k, [])
+            seen = have.setdefault(k, set())
+            for item in v:
+                kk = (item["page"], item["step_no"], item["substep_no"])
+                if kk not in seen:
+                    lst.append(item)
+                    seen.add(kk)
+    c[key] = merged
+    return merged
+
+
 def locate_blocks(env, seqs, entry=None, page=None):
     """
     블록ID → 업무 위치. 같은 Sequence 가 여러 시나리오에 있을 수 있으므로 목록 반환.
     page(시나리오 파일명)를 주면 그 파일 것만 필터 → 로그의 시나리오명과 함께 쓰면 정확.
     """
-    entries = [entry] if entry else get_menu_roots(env)["roots"]
-    merged = {}
-    for e in entries:
+    if entry:
         try:
-            for k, v in build_locator(env, e).items():
-                merged.setdefault(k, [])
-                have = {(x["page"], x["step_no"], x["substep_no"]) for x in merged[k]}
-                for item in v:
-                    kk = (item["page"], item["step_no"], item["substep_no"])
-                    if kk not in have:
-                        merged[k].append(item)
-                        have.add(kk)
+            merged = build_locator(env, entry)
         except Exception:
-            continue
+            merged = {}
+    else:
+        merged = locator_index(env)
     out = []
     for sq in seqs:
         hits = merged.get(sq) or []
