@@ -145,13 +145,12 @@ QUANT = [
     {
         "group": "prevent", "no": "①", "title": "업무 FLOW 누락 지점 검출",
         "before": "0개", "after": "3개 업무", "gain": "잠재 장애 사전 발견",
-        "note": "※ 운영 시나리오 전수 점검 — 없는 시나리오 · 블록으로 이동해 "
-                "업무가 끊기는 지점",
+        "note": "※ 운영 시나리오 전수 점검 · 없는 시나리오/블록으로 이동하는 지점",
     },
     {
         "group": "prevent", "no": "②", "title": "오류 소스 운영 반영 비율",
         "before": "25%", "after": "0%", "gain": "재배포 5건 예방",
-        "note": "※ '26년 SR 25건 — 적용 전(~'26.08) 20건 중 5건 재배포 → "
+        "note": "※ '26년 SR 25건 · 적용 전(~'26.08) 20건 중 5건 재배포 · "
                 "적용 후('26.09) 5건 중 0건",
     },
     {
@@ -169,10 +168,11 @@ QUAL = [
         "chip": "사람 중심 → 시스템 중심",
     },
     {
-        "icon": "pulse", "title": "장애 자동 탐지 기반 확보",
-        "desc": ["통화별 중단 지점 · 종료 사유가",
-                 "구조화 축적되어 탐지 규칙 적용 가능"],
-        "chip": "중단 시점 요약 → 이상 징후 자동 탐지",
+        "icon": "diff", "title": "콜 인프라 전용 형상관리 구축",
+        "desc": ["형상관리 솔루션 연동이 불가한 환경에서",
+                 "콜 인프라 전용 형상관리 체계를 자체 구축"],
+        "note": "※ 시나리오 XML 약 740개 · 버전 비교 · 변경 블록 · FLOW 추적",
+        "chip": "형상관리 부재 → 배포 전 사전 검증 체계",
     },
     {
         "icon": "share", "title": "프로젝트 업무까지 활용 확장",
@@ -428,9 +428,10 @@ F_FOOTER_R = "변경 검증 · 장애 분석 단계만 시스템으로 대체"
 W, H = 1600, 900                      # 16:9 (PPT 기본 비율)
 M = 48                                # 바깥 여백
 
-FONT = ("'NanumGothic','나눔고딕','Nanum Gothic','NanumBarunGothic',"
-        "'Malgun Gothic','맑은 고딕','Apple SD Gothic Neo','Noto Sans KR',"
-        "sans-serif")
+# 글꼴은 나눔고딕 하나로 고정한다.
+# 여러 개를 나열하면('NanumGothic','맑은 고딕',…) PowerPoint 가 SVG 를 도형으로
+# 변환할 때 목록 전체를 글꼴 이름 하나로 읽어 기본 글꼴로 바꿔 버린다.
+FONT = "NanumGothic"
 
 C = {
     "bg":         "#F8FAFC",
@@ -480,8 +481,8 @@ N = {
 }
 
 # 원본(XML · 로그)을 보여 줄 때 쓰는 고정폭 글꼴
-MONO = ("'NanumGothicCoding','나눔고딕코딩','D2Coding','Consolas',"
-        "'Courier New',monospace")
+# 원본(XML · 로그)을 보여 줄 때 쓰는 고정폭 글꼴 (나눔고딕코딩)
+MONO = "NanumGothicCoding"
 
 BLANK = False        # True 면 글자를 그리지 않는다
 GUIDES = False       # True 면 빈 버전에 글자 자리를 연한 막대로 표시
@@ -871,39 +872,52 @@ def build_effect():
     g.append(T(M + 36 + est_w(QUANT_LABEL, 14) + 30, 156, QUANT_CAPTION,
                size=13.5, fill=N["mute"]))
 
-    py, ggap = 176, 14
-    rh = 88 if len(QUANT) <= 3 else 70
+    # 표 머리 (적용 전 · 적용 후 · 효과) — 행마다 같은 세로 줄에 놓여
+    # 지표 설명과 수치 사이가 비지 않는다
+    X_BEF, X_ARR0, X_ARR1, X_AFT = 900, 960, 1080, 1188
+    X_GAIN = 1428
+    py, ggap, hh = 172, 12, 34
+    rh = 84 if len(QUANT) <= 3 else 70
     n_q = len(QUANT)
     n_gap = sum(1 for i in range(1, n_q)
                 if QUANT[i]["group"] != QUANT[i - 1]["group"])
-    ph_ = 10 + rh * n_q + ggap * n_gap + 10
+    ph_ = hh + rh * n_q + ggap * n_gap + 10
     g.append(R(M, py, W - 2 * M, ph_, r=13, fill=N["soft"],
                stroke=N["line"], sw=1))
+    GX, GW = M + 10, 112
+    ix = GX + GW + 20                             # 행 내용 시작
+    hy = py + hh / 2 + 2
+    for hx, lab in ((ix + 40, "지표"), (X_BEF, "적용 전"),
+                    (X_AFT, "적용 후"), (X_GAIN, "효과")):
+        g.append(TC(hx, hy, lab, size=13, weight="700", fill=N["mute"],
+                    anchor="start" if lab == "지표" else "middle"))
+    g.append(f'<path d="M {ix},{py + hh} L {W - M - 20},{py + hh}" '
+             f'stroke="{N["line"]}" stroke-width="1"/>')
 
     # 행 위치 (범주가 바뀌는 곳은 조금 띄운다)
-    rys, y = [], py + 10
+    rys, y = [], py + hh
     for i, q in enumerate(QUANT):
         if i and q["group"] != QUANT[i - 1]["group"]:
             y += ggap
         rys.append(y)
         y += rh
 
-    # 범주 띠 — 표 왼쪽에서 두 행씩 묶는다
-    GX, GW = M + 10, 108
+    # 범주 띠 — 표 왼쪽에서 묶는다
     for gk, (gname, gwhen) in QUANT_GROUPS.items():
         idx = [i for i, q in enumerate(QUANT) if q["group"] == gk]
         if not idx:
             continue
-        y0g, y1g = rys[idx[0]] + 4, rys[idx[-1]] + rh - 4
+        y0g = (py + 10) if idx[0] == 0 else rys[idx[0]] + 4
+        y1g = rys[idx[-1]] + rh - 4
         col = N["teal_dk"] if gk == "prevent" else N["navy"]
         g.append(R(GX, y0g, GW, y1g - y0g, r=9, fill=col))
         cy_ = (y0g + y1g) / 2
-        g.append(TC(GX + GW / 2, cy_ - 9, gname, size=15, weight="700",
+        g.append(TC(GX + GW / 2, cy_ - 10, gname, size=16, weight="700",
                     fill="#FFFFFF"))
-        g.append(TC(GX + GW / 2, cy_ + 12, gwhen, size=11.5,
+        g.append(TC(GX + GW / 2, cy_ + 12, gwhen, size=12.5,
                     fill="#CFEFEA" if gk == "prevent" else N["on_navy_sub"]))
 
-    ix = GX + GW + 18                             # 행 내용 시작
+    gw_max = max(est_w(q["gain"], 14.5) for q in QUANT) + 30
     for i, q in enumerate(QUANT):
         ry = rys[i]
         mid = ry + rh / 2
@@ -911,74 +925,74 @@ def build_effect():
             g.append(f'<path d="M {ix},{ry} L {W - M - 20},{ry}" '
                      f'stroke="{N["line"]}" stroke-width="1"/>')
 
-        g.append(f'<circle cx="{ix + 14}" cy="{mid}" r="14" '
+        g.append(f'<circle cx="{ix + 15}" cy="{mid}" r="15" '
                  f'fill="{N["teal_soft"]}" stroke="{N["teal_line"]}" '
                  f'stroke-width="1"/>')
-        g.append(TC(ix + 14, mid, q["no"], size=13.5, weight="700",
+        g.append(TC(ix + 15, mid, q["no"], size=14, weight="700",
                     fill=N["teal_dk"], keep=True))
-        g.append(TC(ix + 40, mid - 10, q["title"], size=17.5, weight="700",
+        g.append(TC(ix + 40, mid - 12, q["title"], size=21, weight="700",
                     fill=N["ink"], anchor="start"))
-        g.append(TC(ix + 40, mid + 12, q["note"], size=11.5, fill=N["mute"],
+        g.append(TC(ix + 40, mid + 15, q["note"], size=13, fill=N["mute"],
                     anchor="start"))
 
-        gw = est_w(q["gain"], 13.5) + 22
-        gx = W - M - 20 - gw
-        g.append(R(gx, mid - 13, gw, 26, r=13, fill=N["teal_soft"],
-                   stroke=N["teal_line"], sw=1))
-        g.append(TC(gx + gw / 2, mid, q["gain"], size=13.5, weight="700",
+        # 적용 전 → 적용 후 (긴 화살표로 가운데를 잇는다)
+        g.append(TC(X_BEF, mid, q["before"], size=30, weight="700",
+                    fill=N["mute"]))
+        g.append(f'<path d="M {X_ARR0},{mid} L {X_ARR1 - 14},{mid}" '
+                 f'stroke="{N["teal"]}" stroke-width="4" stroke-linecap="round"/>')
+        g.append(f'<path d="M {X_ARR1 - 18},{mid - 11} L {X_ARR1 + 2},{mid} '
+                 f'L {X_ARR1 - 18},{mid + 11} Z" fill="{N["teal"]}"/>')
+        g.append(TC(X_AFT, mid, q["after"], size=42, weight="700",
                     fill=N["teal_dk"]))
 
-        ax = gx - 24
-        aw = est_w(q["after"], 34)
-        lead0 = ix + 40 + max(est_w(q["title"], 17.5), est_w(q["note"], 11.5)) + 18
-        lead1 = ax - aw - 42 - est_w(q["before"], 24) - 18
-        if lead1 - lead0 > 50:
-            g.append(f'<path d="M {lead0},{mid} L {lead1},{mid}" '
-                     f'stroke="{N["line"]}" stroke-width="1.4" '
-                     f'stroke-dasharray="2 6" stroke-linecap="round"/>')
-        g.append(TC(ax, mid, q["after"], size=34, weight="800",
-                    fill=N["teal_dk"], anchor="end"))
-        g.append(big_arrow(ax - aw - 20, mid, N["mute"]))
-        g.append(TC(ax - aw - 42, mid, q["before"], size=24, weight="700",
-                    fill=N["mute"], anchor="end"))
+        g.append(R(X_GAIN - gw_max / 2, mid - 17, gw_max, 34, r=17,
+                   fill=N["teal_dk"]))
+        g.append(TC(X_GAIN, mid, q["gain"], size=14.5, weight="700",
+                    fill="#FFFFFF"))
 
-    # ── 정성 (흰 바탕, 테두리 없는 3단) ──────────────────────────────
-    ql = py + ph_ + 38
+    # ── 정성 (3단 카드) ──────────────────────────────────────────────
+    ql = py + ph_ + 36
     g.append(R(M, ql - 8, 24, 3, r=1.5, fill=N["teal_dk"]))
     g.append(T(M + 36, ql, QUAL_LABEL, size=14, weight="700",
                fill=N["teal_dk"], spacing="2"))
     g.append(T(M + 36 + est_w(QUAL_LABEL, 14) + 30, ql, QUAL_CAPTION,
                size=13.5, fill=N["mute"]))
 
-    gap = 40
+    gap = 24
     cw = (W - 2 * M - gap * 2) / 3
-    y0 = ql + 46
+    top = ql + 20
+    qh = 204
     for i, q in enumerate(QUAL):
         x = M + i * (cw + gap)
-        px = x + 20                      # 카드 안쪽 여백
-        g.append(R(x, y0 - 16, cw, 200, r=11, fill=N["soft"],
+        px = x + 24                      # 카드 안쪽 여백
+        g.append(R(x, top, cw, qh, r=11, fill=N["soft"],
                    stroke=N["line"], sw=1))
-        g.append(f'<circle cx="{px + 21}" cy="{y0 + 12}" r="21" '
+        iy = top + 36
+        g.append(f'<circle cx="{px + 20}" cy="{iy}" r="20" '
                  f'fill="{N["teal_soft"]}"/>')
-        g.append(icon(q.get("icon", ""), px + 21, y0 + 12, 22,
+        g.append(icon(q.get("icon", ""), px + 20, iy, 22,
                       N["teal_dk"], sw=1.7))
-        g.append(T(px + 52, y0 + 18, q["title"], size=18, weight="700",
-                   fill=N["ink"]))
-        g.append(R(px, y0 + 44, 34, 3, r=1.5, fill=N["teal_dk"]))
+        g.append(TC(px + 52, iy, q["title"], size=19, weight="700",
+                    fill=N["ink"], anchor="start"))
+        g.append(R(px, top + 68, 34, 3, r=1.5, fill=N["teal_dk"]))
         for j, ln in enumerate(q["desc"]):
-            g.append(T(px, y0 + 78 + j * 23, ln, size=14, fill=N["sub"]))
-        g.append(T(px, y0 + 126, q.get("note", ""), size=11.5, fill=N["mute"]))
-        g.append(T(px, y0 + 160, q.get("chip", ""), size=14.5, weight="700",
-                   fill=N["teal_dk"]))
+            g.append(TC(px, top + 96 + j * 25, ln, size=15, fill=N["sub"],
+                        anchor="start"))
+        if q.get("note"):
+            g.append(TC(px, top + 146, q["note"], size=12.5, fill=N["mute"],
+                        anchor="start"))
+        c, _ = chipc(px, top + qh - 26, q.get("chip", ""), 14.5, N["teal_dk"],
+                     N["teal_soft"], N["teal_line"], padx=12, h=30)
+        g.append(c)
 
-    # 맨 아래 한 줄 — 장표의 결론이자 아래쪽 빈 공간을 채우는 역할
-    sy = y0 + 184 + 24
-    g.append(R(M, sy, W - 2 * M, 44, r=9, fill=N["navy"]))
-    g.append(icon("shield", M + 26, sy + 22, 19, N["teal"], sw=1.7))
-    g.append(TC(M + 48, sy + 22, E_SUMMARY, size=13.5, weight="700",
+    # 맨 아래 한 줄 — 장표의 결론
+    sy = top + qh + 20
+    g.append(R(M, sy, W - 2 * M, 48, r=9, fill=N["navy"]))
+    g.append(icon("shield", M + 28, sy + 24, 20, N["teal"], sw=1.7))
+    g.append(TC(M + 52, sy + 24, E_SUMMARY, size=15, weight="700",
                 fill="#FFFFFF", anchor="start", ghost=N["ghost_navy"]))
 
-    fy = sy + 68
+    fy = sy + 78
     g.append(T(M, fy, E_FOOTER_L, size=12.5, fill=N["mute"]))
     g.append(T(W - M, fy, E_FOOTER_R, size=12.5, fill=N["mute"], anchor="end"))
 
@@ -1539,7 +1553,12 @@ def build_compare():
 
 
 def build_issues():
-    """현황 및 문제점 — 네 가지 문제를 2 x 2 로. 각 칸은 수치 · 사실 · 경로 · 영향."""
+    """현황 및 문제점 — 네 가지 문제를 2 x 2 로. 각 칸은 수치 · 사실 · 경로 · 영향.
+
+    네 칸이 같은 격자를 쓴다. 제목 줄과 수치 상자는 같은 세로 중심에,
+    사실 두 줄 · 경로 · 영향 띠도 칸마다 같은 높이에 놓는다.
+    글자 크기는 역할별로 하나씩만 쓴다 (제목 22 · 수치 24 · 본문 15 · 경로 14).
+    """
     g = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
          f'viewBox="0 0 {W} {H}">',
          R(0, 0, W, H, r=0, fill=N["page"])]
@@ -1547,80 +1566,101 @@ def build_issues():
     g.append(R(0, 0, W, 100, r=0, fill=N["navy"]))
     g.append(T(M, 52, I_TITLE, size=29, weight="700", fill=N["on_navy"],
                ghost=N["ghost_navy"]))
-    g.append(T(M, 78, I_SUBTITLE, size=13.5, fill=N["on_navy_sub"],
+    g.append(T(M, 78, I_SUBTITLE, size=14, fill=N["on_navy_sub"],
                ghost=N["ghost_navy"]))
-    g.append(T(W - M, 66, I_META, size=12.5, fill=N["on_navy_sub"],
+    g.append(T(W - M, 66, I_META, size=13, fill=N["on_navy_sub"],
                anchor="end", ghost=N["ghost_navy"]))
 
-    gap = 24
+    gap, vgap = 24, 20
     cw = (W - 2 * M - gap) / 2
-    ch = 316
+    ch = 320
+    pad = 26                                  # 칸 안쪽 여백
     acc = N["amber"]
+    Y_HEAD, Y_RULE = 48, 90                   # 제목 줄 중심 · 구분선
+    Y_FACT = (124, 156)                       # 사실 두 줄 중심
+    Y_CHAIN = 212                             # 경로 중심
+    Y_IMP, H_IMP = 252, 46                    # 영향 띠
     for i, it in enumerate(ISSUES):
         x = M + (i % 2) * (cw + gap)
-        y = 120 + (i // 2) * (ch + 18)
+        y = 120 + (i // 2) * (ch + vgap)
         g.append(R(x, y, cw, ch, r=12, fill=N["page"], stroke=N["line"]))
-        g.append(R(x, y, 6, ch, r=3, fill=acc))
 
-        # 제목
-        g.append(f'<circle cx="{x + 40}" cy="{y + 40}" r="17" fill="{acc}"/>')
-        g.append(TC(x + 40, y + 40, it["no"], size=16, weight="700",
+        # 제목 줄 — 번호 · 제목 (왼쪽) / 대표 수치 (오른쪽), 세로 중심 동일
+        hy = y + Y_HEAD
+        g.append(f'<circle cx="{x + pad + 17}" cy="{hy}" r="17" fill="{acc}"/>')
+        g.append(TC(x + pad + 17, hy, it["no"], size=16, weight="700",
                     fill="#FFFFFF", keep=True))
-        g.append(TC(x + 68, y + 40, it["title"], size=21, weight="700",
+        g.append(TC(x + pad + 46, hy, it["title"], size=22, weight="700",
                     fill=N["ink"], anchor="start"))
 
-        # 대표 수치
-        fw, fh = 176, 70
-        fx, fy = x + cw - fw - 20, y + 18
-        g.append(R(fx, fy, fw, fh, r=10, fill=N["amber_soft"],
+        fig_c = RED if it["fig"] == "Critical" else acc
+        fw_ = est_w(it["fig"], 24)
+        lw_ = est_w(it["fig_label"], 13)
+        bw = 20 + fw_ + 14 + lw_ + 20
+        bx = x + cw - pad - bw
+        g.append(R(bx, hy - 24, bw, 48, r=10, fill=N["amber_soft"],
                    stroke=N["amber_line"]))
-        g.append(TC(fx + fw / 2, fy + 28, it["fig"], size=26, weight="800",
-                    fill=RED if it["fig"] == "Critical" else acc))
-        g.append(TC(fx + fw / 2, fy + 54, it["fig_label"], size=12,
-                    weight="700", fill=N["sub"]))
+        g.append(TC(bx + 20, hy, it["fig"], size=24, weight="700",
+                    fill=fig_c, anchor="start"))
+        g.append(f'<path d="M {bx + 20 + fw_ + 7},{hy - 11} v 22" '
+                 f'stroke="{N["amber_line"]}" stroke-width="1.2"/>')
+        g.append(TC(bx + 20 + fw_ + 14, hy, it["fig_label"], size=13,
+                    weight="700", fill=N["sub"], anchor="start"))
+
+        g.append(f'<path d="M {x + pad},{y + Y_RULE} L {x + cw - pad},{y + Y_RULE}" '
+                 f'stroke="{N["line"]}" stroke-width="1"/>')
 
         # 사실 두 줄
         for j, ln in enumerate(it["lines"]):
-            ly = y + 122 + j * 28
-            g.append(f'<circle cx="{x + 34}" cy="{ly - 5}" r="2.6" '
-                     f'fill="{N["mute"]}"/>')
-            g.append(T(x + 46, ly, ln, size=14.5, fill=N["sub"]))
+            ly = y + Y_FACT[j]
+            g.append(f'<circle cx="{x + pad + 4}" cy="{ly}" r="2.8" '
+                     f'fill="{acc}"/>')
+            g.append(TC(x + pad + 16, ly, ln, size=15, fill=N["sub"],
+                        anchor="start"))
 
-        # 문제가 이어지는 경로
-        cy_ = y + 206
-        cx_ = x + 28
-        last = len(it["chain"]) - 1
+        # 문제가 이어지는 경로 — 칸 폭을 꽉 채우도록 칩 폭을 늘린다
+        cy_ = y + Y_CHAIN
+        n = len(it["chain"])
+        aw = 30                                    # 화살표 자리
+        avail = cw - 2 * pad - aw * (n - 1)
+        nat = [est_w(s, 14) + 24 for s in it["chain"]]
+        extra = max(0.0, (avail - sum(nat)) / n)
+        cx_ = x + pad
         for j, stp in enumerate(it["chain"]):
-            end = j == last
-            c, w_ = chipc(cx_, cy_, stp, 13, "#FFFFFF" if end else N["ink"],
-                          RED if end else N["soft"],
-                          None if end else N["line"], padx=12, h=32)
-            g.append(c)
+            end = j == n - 1
+            w_ = nat[j] + extra
+            g.append(R(cx_, cy_ - 18, w_, 36, r=18,
+                       fill=RED if end else N["soft"],
+                       stroke=None if end else N["line"], sw=1))
+            g.append(TC(cx_ + w_ / 2, cy_, stp, size=14, weight="700",
+                        fill="#FFFFFF" if end else N["ink"]))
             cx_ += w_
             if not end:
-                g.append(f'<path d="M {cx_ + 6},{cy_} h 12" stroke="{N["mute"]}" '
+                g.append(f'<path d="M {cx_ + 7},{cy_} h 10" stroke="{N["mute"]}" '
                          f'stroke-width="2" stroke-linecap="round"/>')
-                g.append(f'<path d="M {cx_ + 16},{cy_ - 5} L {cx_ + 22},{cy_} '
+                g.append(f'<path d="M {cx_ + 16},{cy_ - 5} L {cx_ + 23},{cy_} '
                          f'L {cx_ + 16},{cy_ + 5} Z" fill="{N["mute"]}"/>')
-                cx_ += 28
+                cx_ += aw
 
         # 영향
-        iy = y + ch - 62
-        g.append(R(x + 20, iy, cw - 40, 42, r=9, fill=N["amber_soft"],
+        iy = y + Y_IMP
+        g.append(R(x + pad, iy, cw - 2 * pad, H_IMP, r=9, fill=N["amber_soft"],
                    stroke=N["amber_line"]))
-        g.append(TC(x + 36, iy + 21, "영향", size=12, weight="700",
-                    fill=acc, anchor="start", spacing="1"))
-        g.append(TC(x + 80, iy + 21, it["impact"], size=14, weight="700",
-                    fill=N["ink"], anchor="start"))
+        g.append(TC(x + pad + 18, iy + H_IMP / 2, "영향", size=13, weight="700",
+                    fill=acc, anchor="start"))
+        g.append(f'<path d="M {x + pad + 60},{iy + 14} v {H_IMP - 28}" '
+                 f'stroke="{N["amber_line"]}" stroke-width="1.2"/>')
+        g.append(TC(x + pad + 74, iy + H_IMP / 2, it["impact"], size=15,
+                    weight="700", fill=N["ink"], anchor="start"))
 
-    ny = 120 + 2 * (ch + 18) + 4
-    g.append(R(M, ny, W - 2 * M, 44, r=9, fill=N["navy"]))
-    g.append(f'<circle cx="{M + 26}" cy="{ny + 22}" r="8" fill="{acc}"/>')
-    g.append(TC(M + 26, ny + 22, "!", size=12, weight="800", fill="#FFFFFF",
+    ny = 120 + 2 * ch + vgap + 20
+    g.append(R(M, ny, W - 2 * M, 48, r=9, fill=N["navy"]))
+    g.append(f'<circle cx="{M + 28}" cy="{ny + 24}" r="10" fill="{acc}"/>')
+    g.append(TC(M + 28, ny + 24, "!", size=14, weight="700", fill="#FFFFFF",
                 keep=True))
-    g.append(TC(M + 46, ny + 22, I_NOTE, size=14, weight="700",
+    g.append(TC(M + 50, ny + 24, I_NOTE, size=15, weight="700",
                 fill="#FFFFFF", anchor="start", ghost=N["ghost_navy"]))
-    g.append(T(M, ny + 70, I_FOOTER_L, size=12, fill=N["mute"]))
+    g.append(T(M, ny + 76, I_FOOTER_L, size=12.5, fill=N["mute"]))
 
     g.append('</svg>')
     return "".join(g)
