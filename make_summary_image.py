@@ -145,7 +145,8 @@ QUANT = [
     {
         "group": "prevent", "no": "①", "title": "업무 FLOW 누락 지점 검출",
         "before": "0개", "after": "3개 업무", "gain": "잠재 장애 사전 발견",
-        "note": "※ 운영 시나리오 전수 점검 · 없는 시나리오/블록으로 이동하는 지점",
+        "note": "※ 운영 시나리오 전수 점검 수행 및 시나리오 누락에 의한 "
+                "오류 지점 사전 검출",
     },
     {
         "group": "prevent", "no": "②", "title": "오류 소스 운영 반영 비율",
@@ -164,20 +165,21 @@ QUAL = [
     {
         "icon": "shield", "title": "대응 방식 전환",
         "desc": ["담당자 경험에 의존한 판단에서",
-                 "화면 기반의 동일한 확인 절차로 전환"],
+                 "**시스템 화면 기반의 동일한 확인 절차**로 전환"],
+        "note": "※ 통화 흐름 요약 · 중단 지점 · 화면 진행을 한 화면에서 확인",
         "chip": "사람 중심 → 시스템 중심",
     },
     {
         "icon": "diff", "title": "콜 인프라 전용 형상관리 구축",
         "desc": ["형상관리 솔루션 연동이 불가한 환경에서",
-                 "콜 인프라 전용 형상관리 체계를 자체 구축"],
+                 "**콜 인프라 전용 형상관리 체계**를 자체 구축"],
         "note": "※ 시나리오 XML 약 740개 · 버전 비교 · 변경 블록 · FLOW 추적",
         "chip": "형상관리 부재 → 배포 전 사전 검증 체계",
     },
     {
         "icon": "share", "title": "프로젝트 업무까지 활용 확장",
         "desc": ["신계약 프로젝트 인력이 로그 조회 · 시나리오",
-                 "비교 · E2E 화면을 운영 소스 분석에 활용"],
+                 "비교 · E2E 화면을 **운영 소스 분석에 활용**"],
         "note": "※ 신계약 모니터링 프로젝트 인력 2명 제공 ('26.09~'26.12)",
         "chip": "운영 전용 → 프로젝트 공동 활용",
     },
@@ -552,6 +554,25 @@ def TC(x, cy, s, size=15, fill=None, weight="400", anchor="middle",
     """
     return T(x, cy + size * 0.315, s, size=size, fill=fill, weight=weight,
              anchor=anchor, spacing=spacing, keep=keep, ghost=ghost)
+
+
+def TRC(x, cy, s, size=15, fill=None, hl=None, weight="400", hl_weight="700"):
+    """세로 가운데 · 왼쪽 정렬 텍스트. **굵게** 로 감싼 부분만 강조색으로 그린다."""
+    parts = s.split("**")
+    plain = "".join(parts)
+    if BLANK or len(parts) == 1:
+        return TC(x, cy, plain, size=size, fill=fill, weight=weight, anchor="start")
+    spans = []
+    for i, p in enumerate(parts):
+        if not p:
+            continue
+        if i % 2:
+            spans.append(f'<tspan font-weight="{hl_weight}" fill="{hl}">{esc(p)}</tspan>')
+        else:
+            spans.append(esc(p))
+    return (f'<text x="{x}" y="{cy + size * 0.315}" font-family="{FONT}" '
+            f'font-size="{size}" font-weight="{weight}" fill="{fill or C["ink"]}">'
+            + "".join(spans) + '</text>')
 
 
 def R(x, y, w, h, r=10, fill="none", stroke=None, sw=1):
@@ -976,13 +997,24 @@ def build_effect():
                     fill=N["ink"], anchor="start"))
         g.append(R(px, top + 68, 34, 3, r=1.5, fill=N["teal_dk"]))
         for j, ln in enumerate(q["desc"]):
-            g.append(TC(px, top + 96 + j * 25, ln, size=15, fill=N["sub"],
-                        anchor="start"))
+            g.append(TRC(px, top + 96 + j * 25, ln, size=15, fill=N["sub"],
+                         hl=N["teal_dk"]))
         if q.get("note"):
             g.append(TC(px, top + 146, q["note"], size=12.5, fill=N["mute"],
                         anchor="start"))
-        c, _ = chipc(px, top + qh - 26, q.get("chip", ""), 14.5, N["teal_dk"],
-                     N["teal_soft"], N["teal_line"], padx=12, h=30)
+        # 바뀌기 전(흐린 칩) → 바뀐 뒤(진한 칩) — 바뀐 쪽이 먼저 눈에 들어오게
+        cy_ = top + qh - 28
+        bef, _, aft = q.get("chip", "").partition(" → ")
+        c, w1 = chipc(px, cy_, bef, 13.5, N["mute"], "#FFFFFF", N["line"],
+                      padx=12, h=30)
+        g.append(c)
+        ax_ = px + w1 + 8
+        g.append(f'<path d="M {ax_},{cy_} h 16" stroke="{N["teal"]}" '
+                 f'stroke-width="2.6" stroke-linecap="round"/>')
+        g.append(f'<path d="M {ax_ + 14},{cy_ - 7} L {ax_ + 24},{cy_} '
+                 f'L {ax_ + 14},{cy_ + 7} Z" fill="{N["teal"]}"/>')
+        c, _ = chipc(ax_ + 32, cy_, aft, 15, "#FFFFFF", N["teal_dk"], None,
+                     padx=14, h=34)
         g.append(c)
 
     # 맨 아래 한 줄 — 장표의 결론
