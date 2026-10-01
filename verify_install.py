@@ -127,6 +127,12 @@ CHECKS = [
      "배포 비교에서 위치 인덱스 재사용 + 단계별 소요 시간 로그"),
     ("scenario_deploy_diff.py", "inbound = {}",
      "연관 관계 역방향 인덱스 — 없으면 변경 파일 수 x 전체 블록 만큼 반복"),
+    ("ars_ssh_fetcher.py", "_ENC_DETECT_PS",
+     "패턴 검색 파일별 인코딩 판정 — 없으면 CP949 로그의 한글이 '�' 로 깨진다"),
+    ("ars_fetcher.py", "class LazyDecoder",
+     "앞부분이 영문뿐인 CP949 로그도 한글을 바르게 읽기"),
+    ("ars_indexer.py", "LazyDecoder()",
+     "색인기 인코딩 지연 판정 — 없으면 뒤쪽 한글이 깨진 채 색인된다"),
 ]
 
 

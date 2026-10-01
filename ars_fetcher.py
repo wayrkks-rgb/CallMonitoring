@@ -274,6 +274,50 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config_manager import get_enabled_servers, get_log_paths, get_server_label
 
+# 처음 나오는 비-ASCII 바이트 (인코딩 판정 시작점)
+_NON_ASCII = re.compile(rb'[\x80-\xff]')
+
+
+def detect_encoding(data):
+    """bytes → 'utf-8' | 'cp949'.
+
+    ARS 로그는 UTF-8 파일과 CP949 파일이 섞여 있다. 앞 64KB 만 보던
+    예전 방식은, 앞부분이 영문뿐인 CP949 파일을 UTF-8 로 오판해 뒤쪽
+    한글이 전부 '�' 로 깨졌다. 처음 나오는 비-ASCII 바이트부터 본다
+    (그 앞은 영문이라 어느 인코딩으로 읽어도 같다).
+    """
+    m = _NON_ASCII.search(data)
+    if not m:
+        return 'utf-8'
+    sample = data[m.start():m.start() + 65536]
+    try:
+        sample.decode('utf-8')
+        return 'utf-8'
+    except UnicodeDecodeError as e:
+        if e.start >= len(sample) - 3 and len(sample) == 65536:
+            return 'utf-8'                   # 표본 끝에서 잘린 멀티바이트
+        return 'cp949'
+
+
+class LazyDecoder:
+    """줄 단위 디코더. 영문 줄만 나오는 동안은 판정을 미루고, 처음으로
+    한글(비-ASCII)이 나온 줄에서 그 뒤쪽 바이트까지 보고 인코딩을 정한다.
+
+    파일 앞부분(또는 이어 읽는 구간 앞부분)이 영문뿐이면 표본으로는
+    인코딩을 알 수 없다. 그때 UTF-8 로 못박으면 뒤에 나오는 CP949 한글이
+    깨진다.
+    """
+
+    def __init__(self, enc=None):
+        self.enc = enc
+
+    def decode(self, raw, ahead=b''):
+        if self.enc is None:
+            if raw.isascii():
+                return raw.decode('ascii')
+            self.enc = detect_encoding(raw + ahead)
+        return raw.decode(self.enc, errors='replace')
+
 # ── ARS 로그 파싱 정규식 (실데이터 ars_2_.txt 로 검증됨) ──
 RE_CHANNEL   = re.compile(r'\w+@\d+\s+\[(\d{4})\]')
 RE_START     = re.compile(r'\[UniqueCallID=(\d+)\]\s+send_call_start_event\s*->\s*call_start')
@@ -512,15 +556,13 @@ class ArsLogFetcher:
             return None
 
     def _detect_encoding_bytes(self, data):
-        """이미 읽은 bytes 로 인코딩 판정 (UTF-8 우선, 실패 시 CP949)."""
-        sample = data[:65536]
-        try:
-            sample.decode('utf-8')
-            return 'utf-8'
-        except UnicodeDecodeError as e:
-            if e.start >= len(sample) - 3:   # 경계에서 잘린 멀티바이트
-                return 'utf-8'
-            return 'cp949'
+        """이미 읽은 bytes 로 인코딩 판정 (UTF-8 우선, 실패 시 CP949).
+
+        앞 64KB 만 보면, 앞부분이 영문뿐인 CP949 파일을 UTF-8 로 오판해
+        뒤쪽 한글이 전부 '�' 로 깨진다. 처음 나오는 비-ASCII 바이트부터
+        판정한다(그 앞은 영문이라 어느 인코딩이든 같다).
+        """
+        return detect_encoding(data)
 
     def _iter_lines_from_bytes(self, data):
         """읽어둔 bytes 를 인코딩 판정 후 줄 단위로 (재-네트워크 읽기 없음)."""
@@ -550,20 +592,22 @@ class ArsLogFetcher:
     def _detect_encoding(self, path):
         """
         파일 인코딩 감지. UTF-8 우선, 실패 시 CP949(한국 윈도우) 폴백.
-        (샘플 64KB만 검사, 경계에서 잘린 멀티바이트는 UTF-8로 간주)
+        (처음 나오는 비-ASCII 바이트부터 64KB 검사)
         """
+        # 앞부분이 영문뿐이면 한글이 처음 나오는 곳까지 읽어 본다 (최대 16MB)
         try:
             with open(path, 'rb') as f:
-                sample = f.read(65536)
+                while f.tell() < 16 * 1024 * 1024:
+                    blk = f.read(1024 * 1024)
+                    if not blk:
+                        return 'utf-8'
+                    m = _NON_ASCII.search(blk)
+                    if m:
+                        f.seek(f.tell() - len(blk) + m.start())
+                        return detect_encoding(f.read(65536))
         except OSError:
             return 'utf-8'
-        try:
-            sample.decode('utf-8')
-            return 'utf-8'
-        except UnicodeDecodeError as e:
-            if e.start >= len(sample) - 3:   # 경계에서 잘린 멀티바이트 문자
-                return 'utf-8'
-            return 'cp949'
+        return 'utf-8'
 
     def _iter_lines(self, path, encoding=None):
         enc = encoding or self._detect_encoding(path)

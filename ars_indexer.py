@@ -23,6 +23,7 @@ from datetime import datetime, timedelta
 from collections import deque
 
 from ars_fetcher import _ChannelStateMachine, ArsConnectionManager, extract_host, ArsLogFetcher
+from ars_fetcher import LazyDecoder, detect_encoding
 from ars_ssh_fetcher import ArsSshIO, ArsReadError
 from config_manager import get_enabled_servers, get_log_paths, get_server_label
 
@@ -36,14 +37,8 @@ _BACKFILL_MAX_RETRY = 5
 
 
 def _detect_encoding(sample):
-    """UTF-8 우선, 실패 시 CP949."""
-    try:
-        sample.decode('utf-8')
-        return 'utf-8'
-    except UnicodeDecodeError as e:
-        if e.start >= len(sample) - 3:
-            return 'utf-8'
-        return 'cp949'
+    """UTF-8 우선, 실패 시 CP949. (처음 나오는 비-ASCII 바이트부터 판정)"""
+    return detect_encoding(sample)
 
 
 class ArsIndexer:
@@ -331,25 +326,27 @@ class ArsIndexer:
             size = self._ssh_io.file_size(server, path)
             if size is None:
                 return None
-            enc = None
+            dec = LazyDecoder()  # 영문 줄만 나오는 동안은 인코딩 판정을 미룬다
             carry = b''          # 청크 경계에서 잘린 마지막 줄
             src = os.path.basename(path)
             try:
                 for _pos, chunk in self._ssh_io.read_chunks(server, path,
                                                             start_offset, size):
-                    if enc is None:
-                        enc = _detect_encoding(chunk[:65536])
                     buf = carry + chunk
                     nl = buf.rfind(b'\n')
                     if nl < 0:                    # 아직 개행이 없음 → 다음 청크로 이월
                         carry = buf
                         continue
                     body, carry = buf[:nl + 1], buf[nl + 1:]
+                    rel = 0
                     for raw in body.splitlines(keepends=True):
                         ls = offset
                         offset += len(raw)
-                        sm.feed(raw.decode(enc, errors='replace'), source=src,
-                                start_offset=ls, end_offset=offset)
+                        rel += len(raw)
+                        line = (dec.decode(raw, body[rel:rel + 65536])
+                                if dec.enc is None else
+                                raw.decode(dec.enc, errors='replace'))
+                        sm.feed(line, source=src, start_offset=ls, end_offset=offset)
             except ArsReadError as e:
                 # 여기까지 읽은 건 유효하다 → 진행분은 살리고 확정만 막는다
                 complete = False
@@ -359,20 +356,23 @@ class ArsIndexer:
             if carry and seal and complete:
                 ls = offset
                 offset += len(carry)
-                sm.feed(carry.decode(enc or 'utf-8', errors='replace'), source=src,
+                sm.feed(dec.decode(carry), source=src,
                         start_offset=ls, end_offset=offset)
         else:
             # UNC 모드: 로컬/네트워크 파일 순차 읽기
             try:
                 with open(path, 'rb') as f:
                     f.seek(start_offset)
-                    sample = f.read(65536)
-                    enc = _detect_encoding(sample) if sample else 'utf-8'
-                    f.seek(start_offset)
+                    dec = LazyDecoder()  # 영문 줄만 나오는 동안은 판정을 미룬다
                     for raw in f:
                         ls = offset
                         offset += len(raw)
-                        line = raw.decode(enc, errors='replace')
+                        if dec.enc is None and not raw.isascii():
+                            ahead = f.read(65536)      # 판정용으로 뒤쪽을 조금 더 본다
+                            f.seek(offset)
+                            line = dec.decode(raw, ahead)
+                        else:
+                            line = dec.decode(raw)
                         sm.feed(line, source=os.path.basename(path),
                                 start_offset=ls, end_offset=offset)
             except FileNotFoundError:

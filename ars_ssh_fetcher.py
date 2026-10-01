@@ -260,11 +260,36 @@ class ArsSshIO:
     # (경로 2개 × 7일 = 후보 336개면 인코딩 후 37KB 로 한도를 넘어 명령 자체가 실패했다)
     MAX_SCRIPT = 8000
 
-    # 파일 인코딩 후보 — ARS 로그는 UTF-8 과 CP949(=default)가 섞여 있다.
-    # utf8 로만 읽으면 CP949 파일에서 한글 패턴이 전혀 매칭되지 않는다.
-    GREP_ENCODINGS = ('utf8', 'default')
+    # 파일 인코딩 — ARS 로그는 UTF-8 파일과 CP949(=default) 파일이 섞여 있다.
+    # 예전에는 패턴에 한글이 없으면 모든 파일을 utf8 로만 읽었다. 그러면
+    # CP949 파일에서 'ERROR' 같은 영문 패턴은 매칭되지만, 결과 줄의 한글이
+    # 전부 '�' 로 깨져서 돌아왔다. 이제는 파일마다 서버에서 인코딩을 판정한다.
+    #
+    # 판정: 앞부분을 엄격한 UTF-8 디코더로 읽어 본다.
+    #   · 깨진 바이트가 나오면            → default(CP949)
+    #   · 한글 등 멀티바이트가 정상 디코드 → utf8 (조금 더 읽어 확인)
+    #   · 끝까지 영문뿐이면               → utf8 (어느 쪽으로 읽어도 같다)
+    # 디코더를 블록 사이에 이어 쓰므로(GetChars 는 잘린 글자를 다음 블록으로
+    # 넘긴다. GetCharCount 는 넘기지 않아 경계에서 오판한다) 경계는 오류가 아니다.
+    _ENC_DETECT_PS = (
+        "function DE($p){"
+        "$f=[IO.File]::Open($p,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite);"
+        "try{"
+        "$d=(New-Object Text.UTF8Encoding($false,$true)).GetDecoder();"
+        "$b=New-Object byte[] 65536;$h=New-Object char[] 65540;$t=0;$m=-1;"
+        "while($t -lt 16MB){"
+        "$n=$f.Read($b,0,$b.Length);if($n -le 0){break};$t+=$n;"
+        "try{$c=$d.GetChars($b,0,$n,$h,0,$false)}catch{return 'default'};"
+        "if($c -lt $n -and $m -lt 0){$m=$t};"
+        "if($m -ge 0 -and $t -ge $m+1MB){break}"
+        "};"
+        "return 'utf8'"
+        "}finally{$f.Close()}"
+        "};"
+    )
 
     def _grep_script(self, paths, pat, regex, encoding, with_filename=False):
+        """encoding=None 이면 파일마다 인코딩을 판정해 나눠서 Select-String."""
         # 주의: f-string 안의 PowerShell 중괄호는 {{ }} 로 이스케이프해야 하지만,
         #       PowerShell 에 전달될 때는 { } 하나로 나가야 한다.
         arr = ','.join("'" + p.replace("'", "''") + "'" for p in paths)
@@ -272,15 +297,16 @@ class ArsSshIO:
         # 파일명을 함께 내보낼 때는 Windows 경로에 ':' 가 들어있어(D:\...) 콜론으로
         # 자를 수 없다. 로그 본문에 나올 일이 없는 구분자를 쓴다.
         emit = (f"$_.Path + '{GREP_FILE_SEP}' + $_.Line" if with_filename else "$_.Line")
-        return (
-            "$ErrorActionPreference='SilentlyContinue';"
-            f"$ps=@({arr}) | Where-Object {{ Test-Path -LiteralPath $_ }};"
-            "if($ps){"
-            f"Select-String -LiteralPath $ps -Encoding {encoding} {simple}-Pattern '{pat}'"
-            # 포매터를 거치면 콘솔 폭에서 줄이 접히거나 잘린다 → 직접 stdout 출력
-            f" | ForEach-Object {{ [Console]::Out.WriteLine({emit}) }}"
-            "}"
-        )
+        # 포매터를 거치면 콘솔 폭에서 줄이 접히거나 잘린다 → 직접 stdout 출력
+        sel = (f"Select-String -LiteralPath $q -Encoding $e {simple}-Pattern '{pat}'"
+               f" | ForEach-Object {{ [Console]::Out.WriteLine({emit}) }}")
+        head = ("$ErrorActionPreference='SilentlyContinue';"
+                f"$ps=@({arr}) | Where-Object {{ Test-Path -LiteralPath $_ }};")
+        if encoding:
+            return head + f"if($ps){{$q=$ps;$e='{encoding}';{sel}}}"
+        return (head + self._ENC_DETECT_PS
+                + "$g=@{};foreach($p in $ps){$k=DE $p;if(-not $g[$k]){$g[$k]=@()};$g[$k]+=$p};"
+                + f"foreach($e in @($g.Keys)){{$q=$g[$e];{sel}}}")
 
     def _grep_batches(self, paths, pat, regex, encoding, with_filename=False):
         """스크립트 길이 한도에 맞춰 경로를 나눈다."""
@@ -298,23 +324,6 @@ class ArsSshIO:
             batches.append(cur)
         return batches
 
-    @staticmethod
-    def _encodings_for(pattern, encoding):
-        """시도할 파일 인코딩 목록.
-
-        패턴이 ASCII 뿐이면 CP949 파일에서도 utf8 로 읽은 바이트가 그대로
-        매칭된다. 그런데도 무조건 두 번 돌면 '매칭 없음' 검색이 항상 2배로
-        걸린다(패턴 검색이 유난히 느리던 큰 이유). 한글이 들어간 패턴만
-        두 번째 인코딩을 시도한다.
-        """
-        if encoding:
-            return (encoding,)
-        try:
-            pattern.encode('ascii')
-            return ('utf8',)
-        except UnicodeEncodeError:
-            return ArsSshIO.GREP_ENCODINGS
-
     def grep(self, server, paths, pattern, regex=True, encoding=None,
              with_filename=False, timeout=None):
         """서버측 Select-String 으로 매칭 라인만 회수.
@@ -322,7 +331,7 @@ class ArsSshIO:
         Args:
             paths: 로컬 경로 리스트 (존재하지 않는 경로는 무시됨)
             regex: True=.NET 정규식, False=리터럴(SimpleMatch)
-            encoding: 파일 인코딩 지정. None 이면 utf8 → default(CP949) 순으로 시도
+            encoding: 파일 인코딩 지정. None 이면 파일마다 서버에서 판정(utf8/CP949)
             with_filename: True 이면 각 줄이 '경로<GREP_FILE_SEP>본문' 으로 온다
         Returns:
             (lines: list[str], error: str|None)
@@ -330,28 +339,20 @@ class ArsSshIO:
         if not paths:
             return [], None
         pat = pattern.replace("'", "''")
-        encs = self._encodings_for(pattern, encoding)
-        last_err = None
-
-        for enc in encs:
-            lines = []
-            for batch in self._grep_batches(paths, pat, regex, enc, with_filename):
-                rc, out, err = self._run_ps(
-                    server, self._grep_script(batch, pat, regex, enc, with_filename),
-                    timeout=timeout)
-                if rc != 0:
-                    last_err = (err or '').strip()[:200] or f'PowerShell rc={rc}'
-                    logger.warning("ARS grep 실패 (%s, 경로 %d개): %s",
-                                   enc, len(batch), last_err)
-                    continue
-                text = out.decode('utf-8', 'ignore')
-                lines += [l.rstrip('\r\n') for l in text.splitlines() if l.strip()]
-            if lines:
-                if enc != encs[0]:
-                    logger.info("ARS grep: %s 인코딩으로 매칭 (%d줄)", enc, len(lines))
-                return lines, None
-
-        return [], last_err
+        lines, last_err = [], None
+        for batch in self._grep_batches(paths, pat, regex, encoding, with_filename):
+            rc, out, err = self._run_ps(
+                server, self._grep_script(batch, pat, regex, encoding, with_filename),
+                timeout=timeout)
+            if rc != 0:
+                last_err = (err or '').strip()[:200] or f'PowerShell rc={rc}'
+                logger.warning("ARS grep 실패 (%s, 경로 %d개): %s",
+                               encoding or 'auto', len(batch), last_err)
+                continue
+            # 출력은 _run_ps 에서 UTF-8 로 고정했다
+            text = out.decode('utf-8', 'replace')
+            lines += [l.rstrip('\r\n') for l in text.splitlines() if l.strip()]
+        return lines, (None if lines else last_err)
 
 
 # ── SSH 기반 ARS 페처 (UNC 페처와 동일 인터페이스) ──────────
