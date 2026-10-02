@@ -34,7 +34,7 @@ def get_servers():
     try:
         config = load_config()
         if not config:
-            return jsonify({'success': False, 'error': '설정 로드 실패'})
+            return jsonify({'success': False, 'error': 'config.json 을 읽지 못했습니다. 파일이 손상됐을 수 있습니다 — python diag_servers.py 로 상태를 확인하세요'})
 
         servers = config.get('remote_servers', [])
         server_list = []
@@ -55,7 +55,12 @@ def get_servers():
                 'log_paths': normalize_log_paths(server.get('log_paths')),
             })
 
-        return jsonify({'success': True, 'servers': server_list})
+        resp = jsonify({'success': True, 'servers': server_list})
+        # 삭제/추가 직후 목록이 옛 상태로 보이면 '지웠는데 중복'처럼 보인다.
+        # 프록시/브라우저가 이 응답을 재사용하지 못하게 막는다.
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+        resp.headers['Pragma'] = 'no-cache'
+        return resp
 
     except Exception as e:
         logger.exception(f"서버 목록 조회 오류: {e}")
@@ -74,7 +79,7 @@ def add_server():
 
         config = load_config()
         if not config:
-            return jsonify({'success': False, 'error': '설정 로드 실패'})
+            return jsonify({'success': False, 'error': 'config.json 을 읽지 못했습니다. 파일이 손상됐을 수 있습니다 — python diag_servers.py 로 상태를 확인하세요'})
 
         server_type = validated['type']
 
@@ -89,21 +94,54 @@ def add_server():
             'enabled': True,
             'log_paths': validated['log_paths'],  # 정규화된 dict
         }
-        # AICC 전용: SSH 접속 정보
-        if server_type == 'AICC':
+        # SSH 접속 정보 — AICC 는 항상, ARS 는 access_method=ssh 일 때 필요.
+        # (ARS-SSH 에 키 경로를 안 넣으면 등록 직후 인증이 안 돼 로그를 못 읽는다)
+        if server_type == 'AICC' or new_server['access_method'] == 'ssh':
             new_server['user'] = validated.get('user', 'loguser')
             new_server['ssh_port'] = validated.get('ssh_port', 22)
             new_server['ssh_key_path'] = validated.get('ssh_key_path')
 
         # 중복 검사 (hostname / ip / label)
+        # 어느 항목과 부딪혔는지 알려주지 않으면 사용자가 목록에서 그 서버를
+        # 찾지 못해 '지웠는데도 계속 중복'으로 보인다. 키 등록(register-key)이
+        # 서버를 먼저 만들어 두는 경로도 있어 실제로 자주 발생한다.
         servers = config.get('remote_servers', [])
-        for server in servers:
+        conflict = None
+        for i, server in enumerate(servers):
             if new_server['hostname'] and server.get('hostname') == new_server['hostname']:
-                return jsonify({'success': False, 'error': f'중복 호스트명: {new_server["hostname"]}'})
-            if new_server['ip'] and server.get('ip') == new_server['ip']:
-                return jsonify({'success': False, 'error': f'중복 IP: {new_server["ip"]}'})
-            if new_server['label'] and server.get('label') == new_server['label']:
-                return jsonify({'success': False, 'error': f'중복 라벨: {new_server["label"]}'})
+                conflict = (i, server, f'호스트명 {new_server["hostname"]}')
+            elif new_server['ip'] and server.get('ip') == new_server['ip']:
+                conflict = (i, server, f'IP {new_server["ip"]}')
+            elif new_server['label'] and server.get('label') == new_server['label']:
+                conflict = (i, server, f'라벨 {new_server["label"]}')
+            if conflict:
+                break
+
+        if conflict:
+            # 같은 서버를 다시 등록하는 것은 '오류'가 아니라 '갱신'이다.
+            # 막아 세워 봐야 사용자는 목록에서 지우고 다시 넣는 수밖에 없는데,
+            # 그 사이 로그 경로까지 날아간다. 그냥 그 자리를 갱신한다.
+            i, old, what = conflict
+            # 이번에 입력하지 않은 항목은 기존 값을 살린다(통째로 날리지 않도록)
+            if not any(new_server['log_paths'].get(p) for p in PURPOSES):
+                new_server['log_paths'] = normalize_log_paths(old.get('log_paths'))
+            if not new_server.get('ssh_key_path') and old.get('ssh_key_path'):
+                new_server['ssh_key_path'] = old.get('ssh_key_path')
+            for field in ('user', 'ssh_port'):
+                if not new_server.get(field) and old.get(field):
+                    new_server[field] = old.get(field)
+            servers[i] = new_server
+            config['remote_servers'] = servers
+            if save_config(config):
+                logger.info(f"서버 갱신(동일 {what}): [{server_type}] "
+                            f"{get_server_label(new_server)}")
+                return jsonify({
+                    'success': True,
+                    'updated': True,
+                    'message': f'이미 등록된 서버({what})라 기존 항목을 갱신했습니다',
+                    'server': new_server,
+                })
+            return jsonify({'success': False, 'error': '설정 저장 실패'})
 
         servers.append(new_server)
         config['remote_servers'] = servers
@@ -127,7 +165,7 @@ def update_server(server_id):
 
         config = load_config()
         if not config:
-            return jsonify({'success': False, 'error': '설정 로드 실패'})
+            return jsonify({'success': False, 'error': 'config.json 을 읽지 못했습니다. 파일이 손상됐을 수 있습니다 — python diag_servers.py 로 상태를 확인하세요'})
 
         servers = config.get('remote_servers', [])
         if server_id < 0 or server_id >= len(servers):
@@ -173,11 +211,29 @@ def delete_server(server_id):
     try:
         config = load_config()
         if not config:
-            return jsonify({'success': False, 'error': '설정 로드 실패'})
+            return jsonify({'success': False, 'error': 'config.json 을 읽지 못했습니다. 파일이 손상됐을 수 있습니다 — python diag_servers.py 로 상태를 확인하세요'})
 
         servers = config.get('remote_servers', [])
         if server_id < 0 or server_id >= len(servers):
             return jsonify({'success': False, 'error': '서버를 찾을 수 없음'})
+
+        # 서버는 목록 '순번'으로 지운다. 화면 목록이 낡아 있으면(다른 탭에서
+        # 추가/삭제했거나 새로고침 전) 엉뚱한 서버가 지워진다. 화면이 알고 있던
+        # 식별자를 같이 받아 실제 대상과 맞는지 확인한다.
+        data = request.get_json(silent=True) or {}
+        expect = data.get('expect') or {}
+        if expect:
+            target = servers[server_id]
+            for field in ('ip', 'hostname', 'label'):
+                if field in expect and (expect.get(field) or '') != (target.get(field) or ''):
+                    return jsonify({
+                        'success': False,
+                        'error': f'화면 목록이 최신이 아닙니다. '
+                                 f'[{server_id}]번은 지금 '
+                                 f'{get_server_label(target)} 입니다 — '
+                                 f'새로고침 후 다시 시도하세요',
+                        'stale': True,
+                    })
 
         deleted_server = servers.pop(server_id)
         config['remote_servers'] = servers
@@ -212,7 +268,7 @@ def get_server_log_paths(server_id):
     try:
         config = load_config()
         if not config:
-            return jsonify({'success': False, 'error': '설정 로드 실패'})
+            return jsonify({'success': False, 'error': 'config.json 을 읽지 못했습니다. 파일이 손상됐을 수 있습니다 — python diag_servers.py 로 상태를 확인하세요'})
 
         servers = config.get('remote_servers', [])
         if server_id < 0 or server_id >= len(servers):
@@ -263,7 +319,7 @@ def add_log_path(server_id):
 
         config = load_config()
         if not config:
-            return jsonify({'success': False, 'error': '설정 로드 실패'})
+            return jsonify({'success': False, 'error': 'config.json 을 읽지 못했습니다. 파일이 손상됐을 수 있습니다 — python diag_servers.py 로 상태를 확인하세요'})
 
         servers = config.get('remote_servers', [])
         if server_id < 0 or server_id >= len(servers):
@@ -305,7 +361,7 @@ def delete_log_path(server_id):
 
         config = load_config()
         if not config:
-            return jsonify({'success': False, 'error': '설정 로드 실패'})
+            return jsonify({'success': False, 'error': 'config.json 을 읽지 못했습니다. 파일이 손상됐을 수 있습니다 — python diag_servers.py 로 상태를 확인하세요'})
 
         servers = config.get('remote_servers', [])
         if server_id < 0 or server_id >= len(servers):
@@ -367,9 +423,13 @@ def register_server_key():
         ssh_dir = Path.home() / '.ssh'
         ssh_dir.mkdir(mode=0o700, exist_ok=True)
 
-        safe_label = re.sub(r'[^\w\-]', '_', label)
-        private_key_path = ssh_dir / f'id_rsa_{safe_label}'
-        public_key_path = ssh_dir / f'id_rsa_{safe_label}.pub'
+        # 키 파일 이름에 IP 까지 넣는다. 호스트명만 쓰면 이름이 비슷하거나 빈
+        # 서버끼리 같은 파일을 덮어써, 방금 등록한 키가 다른 서버 것으로 바뀐다.
+        safe_label = re.sub(r'[^\w\-]', '_', label) or 'server'
+        safe_ip = re.sub(r'[^\w\-]', '_', ip)
+        stem = f'id_rsa_{safe_label}' if safe_label == safe_ip else f'id_rsa_{safe_label}_{safe_ip}'
+        private_key_path = ssh_dir / stem
+        public_key_path = ssh_dir / f'{stem}.pub'
 
         key = paramiko.RSAKey.generate(bits=4096)
         key.write_private_key_file(str(private_key_path))
@@ -432,45 +492,41 @@ def register_server_key():
         client.close()
         logger.info(f"SSH 키 등록 완료: {user}@{ip} (windows={is_windows})")
 
-        # ── config.json 의 해당 서버에 ssh_key_path 자동 저장
+        # ── 이미 등록된 서버라면 ssh_key_path 를 갱신한다.
+        # 없으면 '여기서 서버를 만들지 않는다'. 예전에는 없는 경우 서버를 새로
+        # 끼워 넣었는데, 그러면 운영구분·라벨 같은 입력값이 빠진 껍데기 항목이
+        # 생기고, 사용자가 [추가] 를 누르면 그 껍데기와 '중복'으로 막혔다.
+        # 서버 생성은 [추가] 한 곳에서만 한다. 키 경로는 응답으로 돌려주고
+        # 화면이 추가 요청에 실어 보낸다.
         srv_type = 'ARS' if is_windows else 'AICC'
+        linked = False
         config = load_config()
         if config:
             servers = config.get('remote_servers', [])
-            found = False
-            for server in servers:
-                if (server.get('ip') == ip) or (server.get('hostname') == label and label != ip):
-                    server['type'] = srv_type
-                    if is_windows:
-                        server['access_method'] = 'ssh'   # ARS-SSH 확정
-                    server['ssh_key_path'] = str(private_key_path)
-                    server['log_paths'] = normalize_log_paths(server.get('log_paths'))
-                    found = True
-                    logger.info(f"기존 서버에 ssh_key_path 업데이트: {ip}")
-                    break
+            # IP 가 가장 확실한 식별자다. 호스트명 먼저 훑으면 이름이 겹치는
+            # 엉뚱한 서버에 키가 붙을 수 있으므로 IP → 호스트명 순으로 찾는다.
+            target = next((s for s in servers if s.get('ip') and s.get('ip') == ip), None)
+            if target is None and label and label != ip:
+                target = next((s for s in servers if s.get('hostname') == label), None)
+            if target is not None:
+                target['type'] = srv_type
+                if is_windows:
+                    target['access_method'] = 'ssh'   # ARS-SSH 확정
+                target['ssh_key_path'] = str(private_key_path)
+                target['log_paths'] = normalize_log_paths(target.get('log_paths'))
+                linked = True
+                logger.info(f"기존 서버에 ssh_key_path 업데이트: "
+                            f"{get_server_label(target)} ({ip})")
+                save_config(config)
 
-            if not found:
-                new_server = {
-                    'type': srv_type,
-                    'access_method': 'ssh' if is_windows else 'unc',
-                    'label': '',
-                    'hostname': label if label != ip else '',
-                    'ip': ip,
-                    'user': user,
-                    'ssh_port': port,
-                    'ssh_key_path': str(private_key_path),
-                    'enabled': True,
-                    'log_paths': {'inbound': [], 'outbound': []}
-                }
-                servers.append(new_server)
-                config['remote_servers'] = servers
-                logger.info(f"config.json 에 서버 신규 추가: {ip}")
-
-            save_config(config)
+        msg = 'SSH 키 등록 완료. 이후 패스워드 없이 접속됩니다.'
+        if not linked:
+            msg += ' 이어서 [추가] 를 눌러 서버를 등록하세요.'
 
         return jsonify({
             'success': True,
-            'message': 'SSH 키 등록 완료. 이후 패스워드 없이 접속됩니다.',
+            'message': msg,
+            'linked': linked,          # True 면 기존 서버에 키가 연결됨
             'key_path': str(private_key_path)
         })
 

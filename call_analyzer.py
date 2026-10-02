@@ -72,13 +72,13 @@ class CallAnalyzer:
                 return match.group(1)
         return None
 
-    def _extract_timestamp_hhmmss(self, line):
-        """로그 라인에서 HHmmss 형태 시간만 추출"""
+    def _extract_timestamp_display(self, line):
+        """로그 라인에서 표시용 'YYYY-MM-DD HH:MM:SS' 추출 (밀리초 제거)"""
         ts = self._extract_timestamp(line)
         if ts:
-            match = re.search(r'(\d{2}:\d{2}:\d{2})', ts)
+            match = re.search(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', ts)
             if match:
-                return match.group(1)
+                return re.sub(r'\s+', ' ', match.group(1))
         return None
 
     def _extract_session_keys(self, lines):
@@ -119,7 +119,7 @@ class CallAnalyzer:
         """recend.do LINE에서 종료시간 + requestData 추출."""
         for line in lines:
             if '"녹취연동-요청-recend.do"' in line or '녹취연동-요청-recend.do' in line:
-                end_time = self._extract_timestamp_hhmmss(line)
+                end_time = self._extract_timestamp_display(line)
                 request_data = None
                 rd_match = re.search(r'"requestData"\s*:\s*(\{[^}]+\})', line)
                 if rd_match:
@@ -245,7 +245,7 @@ class CallAnalyzer:
 
                 start_time = None
                 if session_key in error_line_by_session:
-                    start_time = self._extract_timestamp_hhmmss(
+                    start_time = self._extract_timestamp_display(
                         error_line_by_session[session_key]
                     )
 

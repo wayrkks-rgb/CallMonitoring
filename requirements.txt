@@ -1,6 +1,7 @@
 # Windows 로그 분석 시스템 요구사항 (OpenSSH 네이티브 버전)
-# paramiko와 cryptography는 제거되었습니다
-# Windows OpenSSH를 subprocess로 직접 호출합니다
+# 로그 수집(grep/cat)은 Windows OpenSSH를 subprocess로 직접 호출합니다.
+# paramiko 는 수집 경로가 아니라 'SSH 키 자동등록'(/servers/register-key)
+# 한 곳에서만 쓰이며, 없으면 그 기능만 비활성화됩니다.
 
 Flask==2.3.3
 Flask-SocketIO==5.3.6
@@ -15,6 +16,10 @@ blinker==1.6.2
 python-socketio==5.8.0
 python-engineio==4.7.1
 bidict==0.22.1
+
+# ── SSH 키 자동등록 (routes/servers.py: /servers/register-key) ────────
+# 폐쇄망 반입: paramiko / bcrypt / pynacl / cffi / pycparser / cryptography whl
+paramiko==3.4.0
 
 # ── ARS(Windows) 네트워크 드라이브 접근용 (v4 인바운드) ───────────────
 # win32wnet: WNetAddConnection2 로 ARS UNC 공유에 런타임 인증
