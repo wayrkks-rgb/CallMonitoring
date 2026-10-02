@@ -100,6 +100,10 @@ def ars_index_status():
     st['backfill_running'] = bool(bf and bf.is_alive())
     st['backfill_remaining'] = len(ix._backfill)
     st['backfill_done'] = ix._backfill_done
+    # 라이브 첫 회차(오늘 최신 구간) 완료 여부 · 남은 '오늘 앞부분 채우기'
+    st['live_ready'] = ix._live_ready.is_set()
+    st['today_gap_remaining'] = len(ix._prio)
+    st['live_files'] = len(ix._live)
     st['last_error'] = ix.last_error
     return jsonify(st)
 

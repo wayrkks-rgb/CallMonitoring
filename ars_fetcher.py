@@ -269,6 +269,7 @@ import os
 import re
 import glob
 import mmap
+import time
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -378,7 +379,30 @@ class _ChannelStateMachine:
             'sources': {source},
             'start_offset': start_offset,
             'end_offset': end_offset,
+            'last_mono': time.monotonic(),   # 마지막으로 줄이 붙은 시각 (색인기 마감용)
         }
+
+    def close_idle(self, ended_idle, open_idle, now=None):
+        """오래 조용한 열린 콜을 마감한다 (실시간 색인기 전용).
+
+        콜은 'WaitCall Success!' 나 같은 채널의 다음 call_start 로만 닫힌다.
+        비정상 종료로 그 줄이 안 찍히고 채널이 한동안 안 쓰이면 콜이 몇 시간씩
+        열려 있어, 색인에도 안 보이고 다시 읽을 시작점도 그 자리에 묶인다.
+          ended_idle : call_end 가 찍힌 뒤 이만큼(초) 조용하면 마감
+          open_idle  : call_end 도 없이 이만큼(초) 조용하면 마감
+        returns 마감한 콜 수
+        """
+        now = now if now is not None else time.monotonic()
+        n = 0
+        for ch, call in list(self.open_calls.items()):
+            idle = now - call.get('last_mono', now)
+            if call.get('end_event_line') and idle >= ended_idle:
+                self._close(ch, line_for_time=None, reason='call_end(보조)')
+                n += 1
+            elif idle >= open_idle:
+                self._close(ch, line_for_time=None, reason='무응답 마감')
+                n += 1
+        return n
 
     def feed(self, line, source, start_offset=None, end_offset=None):
         ch = _channel_of(line)
@@ -398,6 +422,7 @@ class _ChannelStateMachine:
         if ch and ch in self.open_calls:
             call = self.open_calls[ch]
             call['lines'].append(line)
+            call['last_mono'] = time.monotonic()
             call['sources'].add(source)
             if end_offset is not None:
                 call['end_offset'] = end_offset

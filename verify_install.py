@@ -133,6 +133,14 @@ CHECKS = [
      "앞부분이 영문뿐인 CP949 로그도 한글을 바르게 읽기"),
     ("ars_indexer.py", "LazyDecoder()",
      "색인기 인코딩 지연 판정 — 없으면 뒤쪽 한글이 깨진 채 색인된다"),
+    ("ars_indexer.py", "def _live_attach",
+     "오늘 로그 우선 — 라이브가 끝부분부터 붙고 앞부분은 우선 작업으로 채움"),
+    ("ars_indexer.py", "_live_ready.wait",
+     "백필은 라이브 첫 회차 뒤에 시작 — 없으면 과거 로그가 오늘 로그를 밀어낸다"),
+    ("ars_fetcher.py", "def close_idle",
+     "닫는 줄 없이 끝난 콜 자동 마감 — 없으면 매 회차 몇 시간치를 다시 읽는다"),
+    ("app.py", "today_gap_remaining",
+     "/ars-index-status 에 라이브 · 오늘 앞부분 진행 표시"),
 ]
 
 
