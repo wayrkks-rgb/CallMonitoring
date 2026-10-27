@@ -1698,6 +1698,383 @@ def build_issues():
     return "".join(g)
 
 
+# ─────────────────────────────────────────────────────────────────────────
+#  시스템 아키텍처 (--page arch) · 핵심 처리 로직 (--page logic)
+#  소스 기준으로 정리한 구성 — 모듈 · 파일 이름은 실제 소스와 같다
+# ─────────────────────────────────────────────────────────────────────────
+
+A_TITLE = "시스템 아키텍처"
+A_SUBTITLE = "콜 통합 로그 모니터링 · ARS FLOW 뷰어 · 시나리오 배포 DIFF — 소스 기준 구성"
+A_META = "Python 3.13 · Flask · SQLite · 폐쇄망 단독 구동"
+
+#  열 : (아이콘, 제목, 기술 한 줄, [카드…]).  카드 : t=제목, d=설명 줄, f=소스 파일
+ARCH_COLS = [
+    ("monitor", "사용자 화면", "HTML5 · JavaScript (프레임워크 없음)", [
+        {"t": "콜 통합 로그 모니터링",
+         "d": ["인바운드 · 아웃바운드 · 패턴 검색", "통화 요약 · VGW 모니터 · 콜 분석"],
+         "f": "index.html"},
+        {"t": "ARS FLOW 뷰어",
+         "d": ["업무 트리 · 블록 그래프 탐색", "Cytoscape.js + dagre 자동 배치"],
+         "f": "topology.html"},
+        {"t": "시나리오 배포 DIFF",
+         "d": ["블록 단위 변경 · 연관 시나리오", "업무 FLOW 누락 경고"],
+         "f": "deploy_diff.html"},
+        {"t": "보이는ARS 화면 렌더러",
+         "d": ["화면 전문(S$코드;TIT$…)을", "폰 화면 목업으로 재현"],
+         "f": "webvoice_render.js"},
+    ]),
+    ("servers", "WEB · WAS", "Python Flask 2.3 · Werkzeug WSGI", [
+        {"t": "웹 서버 · REST API",
+         "d": ["Flask 단일 프로세스 (멀티스레드)", "화면(HTML) + JSON API 제공"],
+         "f": "app.py  :5000"},
+        {"t": "API 라우트 (Blueprint)",
+         "d": ["search · precheck · topology", "deploy · monitor · analysis", "servers · system"],
+         "f": "routes/*.py"},
+        {"t": "백그라운드 스레드",
+         "d": ["ARS 실시간 색인 (5초 · 30일 백필)", "VGW 채널 상태 수집",
+               "시나리오 트리 캐시 사전 생성"],
+         "f": "ars_indexer · vgw_monitor"},
+        {"t": "실행 환경",
+         "d": ["Windows 로그수집 서버", "OpenSSH 클라이언트 · pywin32"],
+         "f": ""},
+    ]),
+    ("spark", "처리 엔진", "규칙 기반 분석 (XML 구조 · 로그 패턴) — LLM 미사용", [
+        {"t": "로그 수집",
+         "d": ["AICC · VGW : 서버에서 grep 후 결과만 전송",
+               "ARS : UNC 읽기 / PowerShell 원격 검색 · 구간 읽기"],
+         "f": "ssh_fetcher · log_searcher · ars_ssh_fetcher"},
+        {"t": "통화 조립 · 색인",
+         "d": ["채널별 call_start → WaitCall Success! 로 통화 경계",
+               "UCID · 고객ID · 전화번호 · 원본 바이트 위치 추출"],
+         "f": "ars_indexer · _ChannelStateMachine"},
+        {"t": "시나리오 분석",
+         "d": ["XML → 블록 그래프 → 메뉴 · 업무 트리",
+               "블록ID → 업무 위치(메뉴 경로 · 단계) 인덱스"],
+         "f": "scenario_parser · scenario_menu · block_index"},
+        {"t": "통화 요약 (보이는ARS)",
+         "d": ["블록 · 화면 전문 · DTMF · 종료 사유 해석",
+               "화면 단위 분리 → 서비스 흐름 · 중단 지점"],
+         "f": "routes/precheck.py"},
+        {"t": "배포 비교",
+         "d": ["매니페스트 → 델타 수집 → 블록 단위 비교",
+               "없는 시나리오 · 블록으로의 이동 검출"],
+         "f": "scenario_deploy · scenario_deploy_diff"},
+    ]),
+    ("database", "저장소", "SQLite (WAL) + 파일 캐시 — 별도 DBMS 없음", [
+        {"t": "ars_index.db",
+         "d": ["통화 색인 (UCID · 고객ID · 전화)", "원본 파일 · 바이트 위치"],
+         "f": "SQLite · calls / scan_state"},
+        {"t": "vgw_stats.db",
+         "d": ["VGW 채널 콜 이벤트 · 통계"],
+         "f": "SQLite"},
+        {"t": "시나리오 캐시",
+         "d": ["시나리오 XML 사본 (환경별)", "트리 · 블록 인덱스"],
+         "f": "scenario_cache · pickle"},
+        {"t": "배포 비교 캐시",
+         "d": ["과거 / 운영 원본 사본", "비교 결과 리포트"],
+         "f": "deploy_cache · deploy_reports"},
+        {"t": "설정",
+         "d": ["서버 · 로그 경로 · 화면코드 이름", "ARS 계정 (DPAPI 암호화)"],
+         "f": "config · screen_map · ars_auth"},
+    ]),
+    ("call", "연계 대상 시스템", "읽기 전용 · 에이전트 설치 없음", [
+        {"t": "ARS 7대 (Windows)",
+         "d": ["콜 로그 (시간별 · 일별 파일)", "실시간 색인 · 패턴 검색 대상",
+               "접근 : UNC(SMB) 공유 또는", "OpenSSH + PowerShell"],
+         "f": "구간 읽기 · Select-String"},
+        {"t": "AICC · VGW 3대 (Linux)",
+         "d": ["세션 로그 (인바운드 · 아웃바운드)", "VGW 채널 모니터 (mon 포트)",
+               "접근 : OpenSSH"],
+         "f": "grep · /dev/tcp 스트림"},
+        {"t": "시나리오 서버 (Windows)",
+         "d": ["시나리오 디자이너 산출물", "XML 약 740개 (.xml / .dxml)",
+               "접근 : OpenSSH"],
+         "f": "매니페스트 조회 · tar.gz"},
+    ]),
+]
+ARCH_W = [234, 262, 388, 256, 248]          # 열 폭 (사이 간격 29)
+ARCH_LINKS = [("HTTP", "JSON"), ("함수", "호출"), ("읽기", "쓰기"), ("수집", "")]
+A_NOTE = ("필요한 부분만 가져온다 — 로그는 서버에서 grep · 바이트 구간 읽기, "
+          "시나리오는 바뀐 파일만 델타 수집, 통화 원문은 색인 위치로 즉시 복원")
+A_FOOTER_L = "※ 모듈 · 파일 이름은 실제 소스 기준"
+
+
+def _fit_warn(where, text, size, avail, mono=False):
+    w = est_w(text, size) * (0.92 if mono else 1.0)
+    if w > avail:
+        print(f"  [넘침] {where}: '{text}' {w:.0f}px > {avail:.0f}px")
+
+
+def _head_band(g, title, subtitle, meta):
+    g.append(R(0, 0, W, 100, r=0, fill=N["navy"]))
+    g.append(T(M, 52, title, size=29, weight="700", fill=N["on_navy"],
+               ghost=N["ghost_navy"]))
+    g.append(T(M, 78, subtitle, size=14, fill=N["on_navy_sub"],
+               ghost=N["ghost_navy"]))
+    g.append(T(W - M, 66, meta, size=13, fill=N["on_navy_sub"],
+               anchor="end", ghost=N["ghost_navy"]))
+
+
+def build_arch():
+    """시스템 아키텍처 — 사용자 화면 · WEB/WAS · 처리 엔진 · 저장소 · 연계 시스템."""
+    g = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+         f'viewBox="0 0 {W} {H}">',
+         R(0, 0, W, H, r=0, fill=N["page"])]
+    _head_band(g, A_TITLE, A_SUBTITLE, A_META)
+
+    gap = (W - 2 * M - sum(ARCH_W)) / (len(ARCH_W) - 1)
+    top, bottom = 122, 782                   # 열 패널 위 · 아래
+    pad, cpad = 12, 14                       # 패널 안쪽 · 카드 안쪽 여백
+    HEAD_H = 74                              # 열 머리 높이
+    T_SZ, D_SZ, F_SZ, LH = 15, 12.5, 11.5, 19
+
+    xs, x = [], M
+    for w in ARCH_W:
+        xs.append(x)
+        x += w + gap
+
+    for ci, (ic, title, tech, cards) in enumerate(ARCH_COLS):
+        x0, w = xs[ci], ARCH_W[ci]
+        dark = ci == 1                       # WEB · WAS 를 중심으로 강조
+        g.append(R(x0, top, w, bottom - top, r=14,
+                   fill=N["navy"] if dark else N["soft"],
+                   stroke=None if dark else N["line"], sw=1))
+        # 열 머리
+        hc = top + 30
+        g.append(f'<circle cx="{x0 + pad + 16}" cy="{hc}" r="16" '
+                 f'fill="{N["navy_soft"] if dark else N["teal_soft"]}"/>')
+        g.append(icon(ic, x0 + pad + 16, hc, 19,
+                      N["teal"] if dark else N["teal_dk"], sw=1.7))
+        g.append(TC(x0 + pad + 40, hc, title, size=17, weight="700",
+                    fill="#FFFFFF" if dark else N["ink"], anchor="start"))
+        g.append(TC(x0 + pad, top + 60, tech, size=11.5, weight="700",
+                    fill=N["teal"] if dark else N["teal_dk"], anchor="start"))
+        _fit_warn(title, tech, 11.5, w - 2 * pad)
+
+        # 카드 높이 → 남는 높이는 카드 사이 간격으로 고르게 나눈다
+        def ch_of(c):
+            return cpad + 20 + LH * len(c["d"]) + (18 if c["f"] else 0) + cpad - 6
+        hs = [ch_of(c) for c in cards]
+        avail = bottom - top - HEAD_H - pad
+        cg = max(8, (avail - sum(hs)) / max(1, len(cards) - 1)) if len(cards) > 1 else 0
+        if cg > 26:                          # 간격이 너무 벌어지면 카드를 키운다
+            extra = (cg - 26) * (len(cards) - 1) / len(cards)
+            hs = [h + extra for h in hs]
+            cg = 26
+        y = top + HEAD_H
+        for c, h in zip(cards, hs):
+            cx_, cw_ = x0 + pad, w - 2 * pad
+            g.append(R(cx_, y, cw_, h, r=10,
+                       fill=N["navy_dk"] if dark else "#FFFFFF",
+                       stroke=N["navy_soft"] if dark else N["line"], sw=1))
+            # 내용을 카드 높이 가운데에 놓는다
+            body = 20 + LH * len(c["d"]) + (18 if c["f"] else 0)
+            ty = y + (h - body) / 2 + 10
+            g.append(R(cx_, ty - 10, 3, 20, r=1.5,
+                       fill=N["teal"] if dark else N["teal_dk"]))
+            g.append(TC(cx_ + cpad, ty, c["t"], size=T_SZ, weight="700",
+                        fill="#FFFFFF" if dark else N["ink"], anchor="start"))
+            _fit_warn(title, c["t"], T_SZ, cw_ - 2 * cpad)
+            for j, ln in enumerate(c["d"]):
+                g.append(TC(cx_ + cpad, ty + 22 + j * LH, ln, size=D_SZ,
+                            fill="#C9D6E2" if dark else N["sub"], anchor="start"))
+                _fit_warn(title, ln, D_SZ, cw_ - 2 * cpad)
+            if c["f"]:
+                fy = ty + 22 + len(c["d"]) * LH - 1
+                g.append(TM(cx_ + cpad, fy + F_SZ * 0.33, c["f"], size=F_SZ,
+                            fill=N["teal"] if dark else "#5F7489"))
+                _fit_warn(title, c["f"], F_SZ, cw_ - 2 * cpad, mono=True)
+            y += h + cg
+
+    # 열 사이 연결 (화살표 + 라벨)
+    ay = (top + HEAD_H + bottom) / 2
+    for i, lab in enumerate(ARCH_LINKS):
+        gx0 = xs[i] + ARCH_W[i]
+        gx1 = xs[i + 1]
+        mx = (gx0 + gx1) / 2
+        rev = i == 3                          # 연계 시스템 → 저장소 (수집)
+        g.append(f'<circle cx="{mx}" cy="{ay}" r="13" fill="{N["teal_dk"]}"/>')
+        d_ = -1 if rev else 1                 # 수집은 연계 시스템 → 저장소 (왼쪽)
+        g.append(f'<path d="M {mx - 5 * d_},{ay} L {mx + 3 * d_},{ay}" '
+                 f'stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round"/>')
+        g.append(f'<path d="M {mx + 1 * d_},{ay - 5} L {mx + 7 * d_},{ay} '
+                 f'L {mx + 1 * d_},{ay + 5} Z" fill="#FFFFFF"/>')
+        # 열 사이가 좁아 라벨은 두 줄로 화살표 위에 둔다
+        for j, part in enumerate(x_ for x_ in lab if x_):
+            g.append(TC(mx, ay - 40 + j * 14, part, size=11, weight="700",
+                        fill=N["teal_dk"]))
+
+    ny = bottom + 18
+    g.append(R(M, ny, W - 2 * M, 46, r=9, fill=N["navy"]))
+    g.append(icon("collect", M + 28, ny + 23, 19, N["teal"], sw=1.7))
+    g.append(TC(M + 52, ny + 23, A_NOTE, size=14.5, weight="700",
+                fill="#FFFFFF", anchor="start", ghost=N["ghost_navy"]))
+    g.append(T(M, ny + 78, A_FOOTER_L, size=12, fill=N["mute"]))
+    g.append('</svg>')
+    return "".join(g)
+
+
+L_TITLE = "핵심 처리 로직"
+L_SUBTITLE = "시나리오 · 로그를 어떻게 읽고, 나누고, 화면으로 보여 주는가"
+L_META = "전부 XML 구조 · 로그 패턴 규칙 기반 — 같은 입력이면 같은 결과"
+
+#  레인 : 제목, 모듈, [단계 4개], 결과.  단계 : t, d(2줄), c(원문 예시, 선택)
+LOGIC = [
+    {"no": "1", "title": "시나리오 → 업무 FLOW",
+     "mod": "scenario_parser · menu · block_index",
+     "steps": [
+         {"t": "시나리오 수집", "d": ["시나리오 서버 OUTPUT 폴더",
+                                    "바뀐 경우에만 tar.gz 수집"],
+          "c": "scenario_cache/<env>/*.xml"},
+         {"t": "XML → 블록 그래프", "d": ["Node(Sequence) = 블록",
+                                        "Link · TargetPage = 이동 · 호출"],
+          "c": "<Node> … <TargetPage>"},
+         {"t": "메뉴 · 업무 트리", "d": ["진입 → 대메뉴 → 업무 메뉴",
+                                      "단계 구분 · MCI 전문 요약"],
+          "c": "ivrmain → W_WebVoice_Main"},
+         {"t": "블록 위치 인덱스", "d": ["블록ID → 메뉴 경로 · 단계",
+                                      "디스크 캐시 · 기동 시 사전 생성"],
+          "c": "block_index (pickle)"},
+     ],
+     "out": {"t": "업무 FLOW 뷰어", "d": ["메뉴 트리 · 블록 그래프 탐색",
+                                         "로그 · DIFF 에서 바로 진입"]}},
+    {"no": "2", "title": "실시간 통화 색인",
+     "mod": "ars_indexer · ars_index_store",
+     "steps": [
+         {"t": "ARS 로그 증분 읽기", "d": ["5초 주기 · 새로 쌓인 부분만",
+                                        "최신 구간 우선 · 30일 백필"],
+          "c": "PowerShell 구간 읽기 · UNC"},
+         {"t": "인코딩 판정", "d": ["UTF-8 / CP949 혼재 로그",
+                                  "한글 첫 등장 지점에서 판정"],
+          "c": "LazyDecoder"},
+         {"t": "채널별 통화 경계", "d": ["시작 줄 → 종료 줄로 한 통화",
+                                      "종료 줄 없으면 무응답 마감"],
+          "c": "call_start → WaitCall Success!"},
+         {"t": "통화 색인 저장", "d": ["UCID · 고객ID · 전화번호",
+                                     "원본 파일 · 바이트 위치"],
+          "c": "SQLite UPSERT (ucid)"},
+     ],
+     "out": {"t": "고객 단위 통화 조회", "d": ["색인 위치만 읽어 원문 복원",
+                                            "VGW 세션 로그와 병합"]}},
+    {"no": "3", "title": "통화 로그 → 보이는ARS 요약",
+     "mod": "routes/precheck.py · webvoice_render.js",
+     "steps": [
+         {"t": "로그 줄 해석", "d": ["블록 종료 · DTMF 입력",
+                                   "종료 사유 (TERM REASON)"],
+          "c": "[시나리오][블록ID] End Event"},
+         {"t": "화면 전문 추출", "d": ["화면 전송 함수에서 전문 분리",
+                                    "제목 · 본문 · 버튼 항목 분해"],
+          "c": "SendMenuData(S$화면코드;TIT$…)"},
+         {"t": "한 업무 = 한 화면", "d": ["같은 코드 · 같은 내용 → 병합",
+                                       "같은 코드라도 내용 다르면 분리"],
+          "c": "내용 키 = 제목 · 본문 · 버튼"},
+         {"t": "서비스 흐름 · 위치", "d": ["시나리오 전환 + 화면 시간순 병합",
+                                        "시작 · 종료 블록 → 업무 위치"],
+          "c": "고객조회 > 대출 > 신청 …"},
+     ],
+     "out": {"t": "통화 요약 화면", "d": ["흐름 · 종료 사유 · 중단 지점",
+                                        "화면 흐름 폰 목업 · FLOW 연결"]}},
+    {"no": "4", "title": "시나리오 배포 비교",
+     "mod": "scenario_deploy · scenario_deploy_diff",
+     "steps": [
+         {"t": "변경 감지", "d": ["과거 · 운영 폴더 매니페스트",
+                                "파일명 · 크기 · 해시 (약 2초)"],
+          "c": "remote_manifest"},
+         {"t": "델타 수집 · 스냅샷", "d": ["바뀐 파일만 tar.gz 전송",
+                                        "블록 단위 스냅샷 (증분 캐시)"],
+          "c": "deploy_cache/과거 · 운영"},
+         {"t": "블록 단위 비교", "d": ["이동 대상 · 스크립트 · 변수",
+                                     "보이는ARS 화면 · 연결 변경"],
+          "c": "difflib · 변수 대입 비교"},
+         {"t": "업무 FLOW 누락 검출", "d": ["없는 시나리오 · 블록으로 이동",
+                                         "이번 변경분 / 기존분 구분"],
+          "c": "find_broken_refs"},
+     ],
+     "out": {"t": "배포 DIFF 리포트", "d": ["업무 위치 · 연관 시나리오",
+                                          "배포 전 수정 필요 경고"]}},
+]
+L_FOOTER_L = "※ 모듈 · 파일 이름은 실제 소스 기준"
+
+
+def build_logic():
+    """핵심 처리 로직 — 4개 레인 (단계 4개 → 결과)."""
+    g = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+         f'viewBox="0 0 {W} {H}">',
+         R(0, 0, W, H, r=0, fill=N["page"])]
+    _head_band(g, L_TITLE, L_SUBTITLE, L_META)
+
+    LW, OW, AW = 212, 236, 26               # 레인 이름 · 결과 · 화살표 폭
+    y0, lh, lg = 120, 172, 12               # 첫 레인 위 · 레인 높이 · 간격
+    sx0 = M + LW + 14
+    sx1 = W - M - OW - AW
+    n = 4
+    sw_ = (sx1 - sx0 - AW * (n - 1)) / n
+
+    for li, ln in enumerate(LOGIC):
+        y = y0 + li * (lh + lg)
+        # 레인 바탕
+        g.append(R(M, y, W - 2 * M, lh, r=14, fill=N["soft"], stroke=N["line"], sw=1))
+        # 레인 이름
+        g.append(R(M, y, LW, lh, r=14, fill=N["navy"]))
+        g.append(f'<circle cx="{M + 30}" cy="{y + 34}" r="15" fill="{N["teal"]}"/>')
+        g.append(TC(M + 30, y + 34, ln["no"], size=15, weight="700",
+                    fill=N["navy"], keep=True))
+        tl = _wrap2(ln["title"], 18, LW - 36)
+        for j, t_ in enumerate(tl):
+            g.append(TC(M + 20, y + 72 + j * 25, t_, size=18, weight="700",
+                        fill="#FFFFFF", anchor="start"))
+        ml = _wrap2(ln["mod"], 11.5, LW - 36)
+        for j, t_ in enumerate(ml):
+            g.append(TM(M + 20, y + lh - 34 + j * 17 - (len(ml) - 1) * 17 + 4,
+                        t_, size=11.5, fill=N["teal"]))
+
+        # 단계
+        for si, st in enumerate(ln["steps"]):
+            bx = sx0 + si * (sw_ + AW)
+            by, bh = y + 14, lh - 28
+            g.append(R(bx, by, sw_, bh, r=10, fill="#FFFFFF", stroke=N["line"], sw=1))
+            g.append(f'<circle cx="{bx + 22}" cy="{by + 24}" r="11" '
+                     f'fill="{N["teal_soft"]}" stroke="{N["teal_line"]}" stroke-width="1"/>')
+            g.append(TC(bx + 22, by + 24, str(si + 1), size=12, weight="700",
+                        fill=N["teal_dk"], keep=True))
+            g.append(TC(bx + 40, by + 24, st["t"], size=15.5, weight="700",
+                        fill=N["ink"], anchor="start"))
+            _fit_warn(ln["title"], st["t"], 15.5, sw_ - 52)
+            for j, d in enumerate(st["d"]):
+                g.append(TC(bx + 16, by + 56 + j * 21, d, size=13, fill=N["sub"],
+                            anchor="start"))
+                _fit_warn(ln["title"], d, 13, sw_ - 30)
+            if st.get("c"):
+                cy_ = by + bh - 22
+                cw_ = min(sw_ - 28, est_w(st["c"], 11.5) * 0.92 + 18)
+                g.append(R(bx + 14, cy_ - 12, cw_, 24, r=6, fill=N["soft"],
+                           stroke=N["line"], sw=1))
+                g.append(TM(bx + 23, cy_ + 11.5 * 0.33, st["c"], size=11.5,
+                            fill=N["navy"]))
+                _fit_warn(ln["title"], st["c"], 11.5, sw_ - 46, mono=True)
+            if si < n - 1:
+                g.append(arrow_right(bx + sw_ + AW / 2, by + bh / 2, N["teal_dk"]))
+        # 결과
+        ox = W - M - OW
+        g.append(arrow_right(ox - AW / 2, y + lh / 2, N["teal_dk"]))
+        by, bh = y + 14, lh - 28
+        g.append(R(ox, by, OW - 14, bh, r=10, fill=N["teal_dk"]))
+        g.append(TC(ox + 16, by + 28, "결과", size=11.5, weight="700",
+                    fill="#CFEFEA", anchor="start", spacing="1"))
+        g.append(TC(ox + 16, by + 54, ln["out"]["t"], size=17, weight="700",
+                    fill="#FFFFFF", anchor="start"))
+        _fit_warn(ln["title"], ln["out"]["t"], 17, OW - 44)
+        for j, d in enumerate(ln["out"]["d"]):
+            g.append(TC(ox + 16, by + 84 + j * 21, d, size=13, fill="#E6FAF6",
+                        anchor="start"))
+            _fit_warn(ln["title"], d, 13, OW - 44)
+
+    fy = y0 + n * (lh + lg) + 22
+    g.append(T(M, fy, L_FOOTER_L, size=12, fill=N["mute"]))
+    g.append('</svg>')
+    return "".join(g)
+
+
 def build_svg(page="overview"):
     if page == "effect":
         return build_effect()
@@ -1709,6 +2086,10 @@ def build_svg(page="overview"):
         return build_compare()
     if page == "issues":
         return build_issues()
+    if page == "arch":
+        return build_arch()
+    if page == "logic":
+        return build_logic()
     return build_overview()
 
 
@@ -1749,7 +2130,7 @@ def main():
                     help="문구 있는 것 / 빈 것 중 한 쪽만 생성 (기본은 둘 다)")
     ap.add_argument("--page",
                     choices=["overview", "issues", "flow", "compare",
-                             "effect", "roadmap", "all"],
+                             "effect", "roadmap", "arch", "logic", "all"],
                     default="all",
                     help="overview=구축 요약, flow=개선 전후 흐름, "
                          "effect=기대효과, roadmap=향후 계획 (기본은 전부)")
@@ -1768,7 +2149,8 @@ def main():
     base, ext = os.path.splitext(args.out)
     ext = ext or ".svg"
 
-    pages = (["overview", "issues", "flow", "compare", "effect", "roadmap"]
+    pages = (["overview", "issues", "flow", "compare", "effect", "roadmap",
+              "arch", "logic"]
              if args.page == "all"
              else [args.page])
     for page in pages:
