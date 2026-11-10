@@ -170,7 +170,12 @@ class VgwCollector:
         self._last_data = {}        # key -> 마지막 스냅샷 수신 시각(watchdog용)
         self._interval = 5
         self._lock = threading.Lock()
+        # 기동할 때마다 '새' 이벤트를 만든다. 예전 스레드는 예전 이벤트를 들고
+        # 있으므로 stop() 으로 한 번 set 되면 영원히 set 상태다.
+        # (하나를 돌려쓰며 start() 에서 clear() 하면, 아직 종료되지 않은 예전
+        #  스레드가 되살아나 예전 포트로 계속 접속을 시도한다)
         self._stop = threading.Event()
+        self._stop.set()            # 아직 기동 전 = 정지 상태
         self._running = False
         self._watchdog = None
 
@@ -186,7 +191,9 @@ class VgwCollector:
             return
         interval = int(cfg.get('poll_interval', 5) or 5)
         self._interval = interval
-        self._stop.clear()
+        # 이번 기동 전용 이벤트 — 예전 스레드는 예전 이벤트를 계속 본다
+        stop_ev = threading.Event()
+        self._stop = stop_ev
         self._running = True
 
         for ep in cfg.get('endpoints', []):
@@ -200,7 +207,7 @@ class VgwCollector:
                 key = self._key(name, direction)
                 t = threading.Thread(
                     target=self._reader_loop,
-                    args=(key, name, direction, sid, int(port), interval),
+                    args=(key, name, direction, sid, int(port), interval, stop_ev),
                     daemon=True,
                 )
                 self._threads[key] = t
@@ -208,12 +215,13 @@ class VgwCollector:
 
         # 스트림 정체 감시(watchdog): VGW 재기동 등으로 스트림이 조용히 멈추면
         #   SSH 프로세스를 강제 종료 → 리더 루프가 자동 재연결한다.
-        self._watchdog = threading.Thread(target=self._watchdog_loop, daemon=True)
+        self._watchdog = threading.Thread(target=self._watchdog_loop,
+                                          args=(stop_ev,), daemon=True)
         self._watchdog.start()
 
         logger.info(f"VGW 모니터: 수집기 기동 (스트림 {len(self._threads)}개, 주기 {interval}s)")
 
-    def stop(self):
+    def stop(self, join_timeout=5):
         self._stop.set()
         self._running = False
         for key, p in list(self._procs.items()):
@@ -223,6 +231,19 @@ class VgwCollector:
                 pass
         self._procs.clear()
         self._last_data.clear()
+
+        # 스레드가 실제로 끝날 때까지 기다린다. 기다리지 않고 넘어가면 예전
+        # 스레드가 살아 있는 채로 다음 기동이 겹쳐, 지운 엔드포인트까지
+        # 계속 접속을 시도한다.
+        threads = list(self._threads.items())
+        self._threads.clear()
+        deadline = time.time() + join_timeout
+        for key, t in threads:
+            t.join(timeout=max(0.1, deadline - time.time()))
+            if t.is_alive():
+                logger.warning("VGW 모니터[%s]: 스레드가 아직 종료 중 "
+                               "(다음 접속 시도는 하지 않습니다)", key)
+        self._errors.clear()
         logger.info("VGW 모니터: 수집기 종료")
 
     def is_running(self):
@@ -231,18 +252,15 @@ class VgwCollector:
     def restart(self):
         """설정 변경 후 재기동."""
         self.stop()
-        # 스레드 정리 대기(짧게)
-        time.sleep(0.5)
-        self._threads.clear()
-        self._latest.clear()
+        self._latest.clear()        # 예전 설정의 스냅샷이 화면에 남지 않도록
         self.start()
 
-    def _watchdog_loop(self):
+    def _watchdog_loop(self, stop_ev):
         """스트림 정체 감시. 일정 시간 스냅샷이 없으면 SSH 프로세스를 강제 종료
         → 리더 루프가 자동 재연결(VGW 재기동/텔넷 세션 사망 자동 복구)."""
-        while not self._stop.is_set():
+        while not stop_ev.is_set():
             self._watchdog_tick()
-            if self._stop.wait(5):
+            if stop_ev.wait(5):
                 break
 
     def _watchdog_tick(self):
@@ -310,9 +328,11 @@ class VgwCollector:
         return f"{user}@{ip}" if ip else (hostname or None)
 
     # ── 리더 루프(엔드포인트/방향 1개) ─────────────────────
-    def _reader_loop(self, key, name, direction, server_id, port, interval):
+    def _reader_loop(self, key, name, direction, server_id, port, interval, stop_ev):
+        # self._stop 이 아니라 '기동 시점의' 이벤트를 본다. 재기동으로
+        # self._stop 이 새 이벤트로 바뀌어도 이 스레드는 확실히 멈춘다.
         backoff = 2
-        while not self._stop.is_set():
+        while not stop_ev.is_set():
             server = None
             try:
                 server = self._server_resolver(server_id)
@@ -320,14 +340,14 @@ class VgwCollector:
                 self._set_error(key, f"서버 조회 실패: {e}")
             if not server:
                 self._set_error(key, f"server_id={server_id} 서버 설정 없음")
-                if self._stop.wait(10):
+                if stop_ev.wait(10):
                     break
                 continue
 
             cmd = self._build_ssh_cmd(server, port, interval)
             if not cmd:
                 self._set_error(key, "SSH 대상 구성 실패(호스트/IP 확인)")
-                if self._stop.wait(10):
+                if stop_ev.wait(10):
                     break
                 continue
 
@@ -346,7 +366,7 @@ class VgwCollector:
                 backoff = 2
 
                 for line in proc.stdout:
-                    if self._stop.is_set():
+                    if stop_ev.is_set():
                         break
                     for snap in parser.feed(line):
                         self._store_snapshot(key, name, direction, port, snap)
@@ -358,11 +378,11 @@ class VgwCollector:
                 except Exception:
                     pass
                 rc = proc.poll()
-                if not self._stop.is_set():
+                if not stop_ev.is_set():
                     self._set_error(key, f"스트림 종료(rc={rc}) {err[:200]}")
             except FileNotFoundError:
                 self._set_error(key, "OpenSSH 미설치")
-                if self._stop.wait(30):
+                if stop_ev.wait(30):
                     break
                 continue
             except Exception as e:
@@ -376,7 +396,7 @@ class VgwCollector:
                         pass
 
             # 재연결 백오프
-            if self._stop.wait(backoff):
+            if stop_ev.wait(backoff):
                 break
             backoff = min(backoff * 2, 30)
 

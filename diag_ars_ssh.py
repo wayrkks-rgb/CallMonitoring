@@ -159,13 +159,14 @@ def main():
         print(f"      L{i+1}: {line[:90]}")
 
     print(f"\n[6] 패턴 검색 (Select-String) — 패턴={args.pattern!r}")
-    for encoding in ('utf8', 'default'):
+    for encoding in (None, 'utf8', 'default'):
         lines, err = io.grep(server, [cur], args.pattern, regex=True, encoding=encoding)
-        print(f"    -Encoding {encoding:<8} → {len(lines)}줄" + (f"  err={err[:80]}" if err else ""))
+        name = encoding or '자동판정'
+        print(f"    -Encoding {name:<8} → {len(lines)}줄" + (f"  err={err[:80]}" if err else ""))
         for l in lines[:2]:
             print(f"        {l[:90]}")
-    print("    * utf8 은 0줄인데 default 가 나오면 → 로그가 CP949.")
-    print("      ars_ssh_fetcher.py 의 grep(encoding='default') 로 바꾸세요.")
+    print("    * 실제 패턴 검색은 '자동판정'(파일마다 utf8/CP949 판정)을 쓴다.")
+    print("      자동판정 결과의 한글이 깨지면 이 출력을 그대로 공유해 주세요.")
 
     # 7) 인덱스 상태 ----------------------------------------------
     print("\n[7] 인덱스 상태")

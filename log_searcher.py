@@ -8,11 +8,12 @@
 - log_paths 는 config_manager 헬퍼로 purpose(inbound/outbound)별 조회
 """
 
+import os
 import re
 import logging
 from datetime import datetime, timedelta
 
-from ssh_fetcher import OpenSSHLogFetcher
+from ssh_fetcher import OpenSSHLogFetcher, split_filename
 from config_manager import get_enabled_servers, get_log_paths, get_server_label
 
 logger = logging.getLogger(__name__)
@@ -256,9 +257,12 @@ class LogSearcher:
                 'flow_results': []
             }
 
-    def search_by_pattern(self, pattern):
+    def search_by_pattern(self, pattern, deadline=None):
         """
         패턴(정규식) 기반 로그 검색 — AICC 대상, 서버측 grep 으로 매칭 라인만 회수.
+
+        deadline: time.monotonic() 기준 마감. 넘으면 남은 서버를 건너뛰고
+                  partial=True 로 반환한다.
 
         - purpose 미지정(None) 이면 inbound + outbound 경로 전부를 대상으로 검색
         - grep -E(ERE) 사용 → '|' 등 확장 정규식 지원, 매칭 라인 원문 그대로 반환
@@ -275,36 +279,61 @@ class LogSearcher:
             server_type='AICC', purpose=self.purpose, server_ids=self.server_ids
         )
 
+        import time as _time
         dates = self._get_date_range()
         results = []
+        partial = False
+        skipped = []
 
-        for idx, server in targets:
+        # 서버마다 별개의 SSH 접속이라 동시에 돌린다 (순차면 서버 수만큼 곱해진다)
+        def one(server):
             server_id = get_server_label(server)
+            if deadline is not None and deadline - _time.monotonic() <= 1:
+                return server_id, [], [], True
             # purpose=None → inbound + outbound 전체 경로 (중복 경로 제거:
             #   dev 서버처럼 inbound/outbound 경로가 동일하면 grep 중복 매칭 방지)
             log_paths = list(dict.fromkeys(get_log_paths(server, self.purpose)))
             if not log_paths:
-                continue
+                return server_id, [], [], False
 
+            # with_filename=True: 한 서버가 여러 로그파일(인바운드/아웃바운드,
+            # api/speech ...)을 보고 있어 결과만으로는 출처를 알 수 없다.
+            remain = None if deadline is None else max(5, deadline - _time.monotonic())
             lines, errors = self.fetcher.grep_remote(
-                server, log_paths, dates, pattern, use_extended=True
+                server, log_paths, dates, pattern,
+                use_extended=True, with_filename=True, timeout=remain
             )
-            if errors:
-                self.errors.extend(errors)
-
+            out = []
             for line in lines:
-                results.append({
-                    'line': line.strip(),
+                path, body = split_filename(line)
+                out.append({
+                    'line': body.strip(),
                     'server': server_id,
                     'type': 'AICC',
-                    'file_path': f"{server_id}:pattern_search",
-                    'timestamp': self._extract_timestamp_from_line(line)
+                    'file': os.path.basename(path) if path else '',
+                    'file_path': path or f"{server_id}:pattern_search",
+                    'timestamp': self._extract_timestamp_from_line(body)
                 })
+            return server_id, out, errors or [], False
 
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max(1, min(len(targets), 8))) as ex:
+            for server_id, out, errs, skip in ex.map(lambda t: one(t[1]), targets):
+                if skip:
+                    partial = True
+                    skipped.append(server_id)
+                    continue
+                self.errors.extend(errs)
+                results.extend(out)
+
+        if skipped:
+            self.errors.append({'error': '시간 초과로 건너뜀',
+                                'details': f"AICC {', '.join(skipped)}"})
         return {
             'success': True,
             'pattern': pattern,
             'result_count': len(results),
             'results': results,
+            'partial': partial,
             'errors': self.errors if self.errors else None
         }

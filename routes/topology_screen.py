@@ -3,6 +3,8 @@ import os, json
 from flask import Blueprint, request, jsonify
 import scenario_store
 import block_index as BI
+# payload 정리(화면 경계 절단 · 호출 결과 꼬리 제거)를 로그 경로와 동일하게 적용
+from routes.precheck import _normalize_payload
 
 topology_screen_bp = Blueprint("topology_screen", __name__)
 _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -38,7 +40,8 @@ def api_topology_screen():
     if not sc:
         return jsonify({"found": False, "seq": seq})
     return jsonify({"found": True, "seq": seq, "code": sc["code"],
-                    "payload": sc["payload"], "name": _name_of(sc["code"])})
+                    "payload": _normalize_payload(sc["payload"]),
+                    "name": _name_of(sc["code"])})
 
 @topology_screen_bp.route("/api/topology/screens")
 def api_topology_screens():
@@ -56,4 +59,6 @@ def api_topology_screens():
     screens = pm.get(key, [])
     for s in screens:
         s["name"] = _name_of(s["screen_code"])
+        if s.get("payload"):
+            s["payload"] = _normalize_payload(s["payload"])
     return jsonify({"page": page, "screens": screens})

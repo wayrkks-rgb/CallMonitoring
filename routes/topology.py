@@ -24,6 +24,20 @@ def topology_page():
     return send_from_directory(TEMPLATES_DIR, 'topology.html')
 
 
+@topology_bp.route('/api/topology/warm')
+def api_warm():
+    """구성도 준비(캐시 생성) 진행 상태.
+
+    시나리오 파일을 새로 덮어쓰면 전부 다시 읽어야 해서 첫 조회가 오래 걸린다.
+    화면에서 '멈춘 것'과 '준비 중'을 구분할 수 있도록 진행 상황을 알려 준다.
+    """
+    try:
+        import scenario_boot
+        return jsonify(scenario_boot.status())
+    except Exception as e:
+        return jsonify({'state': 'unknown', 'error': str(e)})
+
+
 @topology_bp.route('/api/topology/envs')
 def api_envs():
     """환경(운영/개발·QA 등) 목록"""

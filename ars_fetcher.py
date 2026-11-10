@@ -269,10 +269,55 @@ import os
 import re
 import glob
 import mmap
+import time
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from config_manager import get_enabled_servers, get_log_paths, get_server_label
+
+# 처음 나오는 비-ASCII 바이트 (인코딩 판정 시작점)
+_NON_ASCII = re.compile(rb'[\x80-\xff]')
+
+
+def detect_encoding(data):
+    """bytes → 'utf-8' | 'cp949'.
+
+    ARS 로그는 UTF-8 파일과 CP949 파일이 섞여 있다. 앞 64KB 만 보던
+    예전 방식은, 앞부분이 영문뿐인 CP949 파일을 UTF-8 로 오판해 뒤쪽
+    한글이 전부 '�' 로 깨졌다. 처음 나오는 비-ASCII 바이트부터 본다
+    (그 앞은 영문이라 어느 인코딩으로 읽어도 같다).
+    """
+    m = _NON_ASCII.search(data)
+    if not m:
+        return 'utf-8'
+    sample = data[m.start():m.start() + 65536]
+    try:
+        sample.decode('utf-8')
+        return 'utf-8'
+    except UnicodeDecodeError as e:
+        if e.start >= len(sample) - 3 and len(sample) == 65536:
+            return 'utf-8'                   # 표본 끝에서 잘린 멀티바이트
+        return 'cp949'
+
+
+class LazyDecoder:
+    """줄 단위 디코더. 영문 줄만 나오는 동안은 판정을 미루고, 처음으로
+    한글(비-ASCII)이 나온 줄에서 그 뒤쪽 바이트까지 보고 인코딩을 정한다.
+
+    파일 앞부분(또는 이어 읽는 구간 앞부분)이 영문뿐이면 표본으로는
+    인코딩을 알 수 없다. 그때 UTF-8 로 못박으면 뒤에 나오는 CP949 한글이
+    깨진다.
+    """
+
+    def __init__(self, enc=None):
+        self.enc = enc
+
+    def decode(self, raw, ahead=b''):
+        if self.enc is None:
+            if raw.isascii():
+                return raw.decode('ascii')
+            self.enc = detect_encoding(raw + ahead)
+        return raw.decode(self.enc, errors='replace')
 
 # ── ARS 로그 파싱 정규식 (실데이터 ars_2_.txt 로 검증됨) ──
 RE_CHANNEL   = re.compile(r'\w+@\d+\s+\[(\d{4})\]')
@@ -282,6 +327,7 @@ RE_WAITOK    = re.compile(r'\[WAITCALL\]\s+WaitCall\s+Success!')
 RE_CUSTID    = re.compile(r'app\.CustID\s*:?\s*(\d+)')
 RE_PHONE     = re.compile(r'(?:ani\[|ANI\[|call_ani\()(\d{9,12})')
 RE_TIME      = re.compile(r'(\d{2}:\d{2}:\d{2})')
+RE_DATETIME  = re.compile(r'(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})')
 
 
 def _channel_of(line):
@@ -290,8 +336,17 @@ def _channel_of(line):
 
 
 def _time_of(line):
+    """HH:MM:SS (콜 경계 시각 — 날짜는 UCID 앞 8자리에서 구함)"""
     m = RE_TIME.search(line)
     return m.group(1) if m else None
+
+
+def _datetime_of(line):
+    """'YYYY-MM-DD HH:MM:SS' (표시용). 날짜 접두부가 없으면 HH:MM:SS 만."""
+    m = RE_DATETIME.search(line)
+    if m:
+        return f'{m.group(1)} {m.group(2)}'
+    return _time_of(line)
 
 
 class _ChannelStateMachine:
@@ -324,7 +379,30 @@ class _ChannelStateMachine:
             'sources': {source},
             'start_offset': start_offset,
             'end_offset': end_offset,
+            'last_mono': time.monotonic(),   # 마지막으로 줄이 붙은 시각 (색인기 마감용)
         }
+
+    def close_idle(self, ended_idle, open_idle, now=None):
+        """오래 조용한 열린 콜을 마감한다 (실시간 색인기 전용).
+
+        콜은 'WaitCall Success!' 나 같은 채널의 다음 call_start 로만 닫힌다.
+        비정상 종료로 그 줄이 안 찍히고 채널이 한동안 안 쓰이면 콜이 몇 시간씩
+        열려 있어, 색인에도 안 보이고 다시 읽을 시작점도 그 자리에 묶인다.
+          ended_idle : call_end 가 찍힌 뒤 이만큼(초) 조용하면 마감
+          open_idle  : call_end 도 없이 이만큼(초) 조용하면 마감
+        returns 마감한 콜 수
+        """
+        now = now if now is not None else time.monotonic()
+        n = 0
+        for ch, call in list(self.open_calls.items()):
+            idle = now - call.get('last_mono', now)
+            if call.get('end_event_line') and idle >= ended_idle:
+                self._close(ch, line_for_time=None, reason='call_end(보조)')
+                n += 1
+            elif idle >= open_idle:
+                self._close(ch, line_for_time=None, reason='무응답 마감')
+                n += 1
+        return n
 
     def feed(self, line, source, start_offset=None, end_offset=None):
         ch = _channel_of(line)
@@ -344,6 +422,7 @@ class _ChannelStateMachine:
         if ch and ch in self.open_calls:
             call = self.open_calls[ch]
             call['lines'].append(line)
+            call['last_mono'] = time.monotonic()
             call['sources'].add(source)
             if end_offset is not None:
                 call['end_offset'] = end_offset
@@ -502,15 +581,13 @@ class ArsLogFetcher:
             return None
 
     def _detect_encoding_bytes(self, data):
-        """이미 읽은 bytes 로 인코딩 판정 (UTF-8 우선, 실패 시 CP949)."""
-        sample = data[:65536]
-        try:
-            sample.decode('utf-8')
-            return 'utf-8'
-        except UnicodeDecodeError as e:
-            if e.start >= len(sample) - 3:   # 경계에서 잘린 멀티바이트
-                return 'utf-8'
-            return 'cp949'
+        """이미 읽은 bytes 로 인코딩 판정 (UTF-8 우선, 실패 시 CP949).
+
+        앞 64KB 만 보면, 앞부분이 영문뿐인 CP949 파일을 UTF-8 로 오판해
+        뒤쪽 한글이 전부 '�' 로 깨진다. 처음 나오는 비-ASCII 바이트부터
+        판정한다(그 앞은 영문이라 어느 인코딩이든 같다).
+        """
+        return detect_encoding(data)
 
     def _iter_lines_from_bytes(self, data):
         """읽어둔 bytes 를 인코딩 판정 후 줄 단위로 (재-네트워크 읽기 없음)."""
@@ -540,20 +617,22 @@ class ArsLogFetcher:
     def _detect_encoding(self, path):
         """
         파일 인코딩 감지. UTF-8 우선, 실패 시 CP949(한국 윈도우) 폴백.
-        (샘플 64KB만 검사, 경계에서 잘린 멀티바이트는 UTF-8로 간주)
+        (처음 나오는 비-ASCII 바이트부터 64KB 검사)
         """
+        # 앞부분이 영문뿐이면 한글이 처음 나오는 곳까지 읽어 본다 (최대 16MB)
         try:
             with open(path, 'rb') as f:
-                sample = f.read(65536)
+                while f.tell() < 16 * 1024 * 1024:
+                    blk = f.read(1024 * 1024)
+                    if not blk:
+                        return 'utf-8'
+                    m = _NON_ASCII.search(blk)
+                    if m:
+                        f.seek(f.tell() - len(blk) + m.start())
+                        return detect_encoding(f.read(65536))
         except OSError:
             return 'utf-8'
-        try:
-            sample.decode('utf-8')
-            return 'utf-8'
-        except UnicodeDecodeError as e:
-            if e.start >= len(sample) - 3:   # 경계에서 잘린 멀티바이트 문자
-                return 'utf-8'
-            return 'cp949'
+        return 'utf-8'
 
     def _iter_lines(self, path, encoding=None):
         enc = encoding or self._detect_encoding(path)
@@ -620,6 +699,128 @@ class ArsLogFetcher:
             call['server'] = label
         return sm.emitted
 
+    # ── 오늘 · 색인 전 구간 직접 검색 ──────────────────────
+    # 색인은 '끝난 통화'를 5초 주기로 담는다. 그 사이(또는 색인이 밀렸을 때)
+    # 방금 끝났거나 아직 진행 중인 통화는 색인에 없어 조회가 안 됐다.
+    # 오늘 파일의 '색인이 아직 안 읽은 구간'만 직접 읽어 보충한다.
+    TAIL_CAP = 32 * 1024 * 1024      # 색인이 많이 밀렸을 때 직접 읽을 최대치(끝에서부터)
+
+    def _today_live_paths(self, paths, now):
+        """오늘 쓰이는 중인 파일 (시간별이면 현재 · 직전 시각)."""
+        today = now.strftime('%Y-%m-%d')
+        out = []
+        for tmpl in paths:
+            if '{HH}' in tmpl:
+                prev = now - timedelta(hours=1)
+                if prev.strftime('%Y-%m-%d') == today:
+                    out.append(self._expand(tmpl, today, prev.hour))
+                out.append(self._expand(tmpl, today, now.hour))
+            else:
+                out.append(self._expand(tmpl, today))
+        return list(dict.fromkeys(out))
+
+    # 파일 IO 훅 — UNC 는 직접 읽고, SSH 페처가 덮어쓴다
+    def _tail_size(self, server, path):
+        try:
+            return os.path.getsize(path)
+        except OSError:
+            return None
+
+    def _tail_read(self, server, path, start, end):
+        try:
+            with open(path, 'rb') as f:
+                f.seek(start)
+                return f.read(end - start)
+        except OSError:
+            return None
+
+    def _tail_may_have(self, server, path, needle, size):
+        """읽기 전에 값싸게 '있을 수도 있는지' 확인 (UNC 는 바로 읽으므로 항상 True)."""
+        return True
+
+    def _search_today_tail(self, servers, needle, store):
+        """오늘 파일의 색인 전 구간에서 needle 이 든 통화를 직접 조립한다.
+        실패해도 색인 결과는 그대로 나가야 하므로 예외는 경고로만 남긴다."""
+        try:
+            return self._search_today_tail_impl(servers, needle, store)
+        except Exception as e:
+            logger.warning("색인 전 구간 직접 검색 실패: %s", e)
+            self.errors.append({'error': '오늘 최신 구간 직접 검색 실패', 'details': str(e)})
+            return []
+
+    def _search_today_tail_impl(self, servers, needle, store):
+        now = datetime.now()
+        if now.strftime('%Y-%m-%d') not in self._date_range():
+            return []
+        nb = needle.encode('utf-8', 'ignore')
+        out = []
+        for server in servers:
+            label = get_server_label(server)
+            for path in self._today_live_paths(get_log_paths(server, 'inbound'), now):
+                try:
+                    st = store.get_scan_state(path) if store is not None else None
+                except Exception:
+                    st = None
+                if st and st.get('sealed'):
+                    continue                       # 끝까지 색인된 파일
+                size = self._tail_size(server, path)
+                if not size:
+                    continue
+                indexed = (st.get('pending_offset') or 0) if st else 0
+                start = indexed
+                if size - start > self.TAIL_CAP:
+                    self.errors.append({
+                        'server': label, 'error': 'ARS 색인 지연',
+                        'details': f'{os.path.basename(path)}: 색인 전 '
+                                   f'{(size - start) / 1048576:.0f}MB — 최근 '
+                                   f'{self.TAIL_CAP // 1048576}MB 만 직접 검색했습니다'})
+                    start = size - self.TAIL_CAP
+                if start >= size:
+                    continue
+                if not self._tail_may_have(server, path, needle, size - start):
+                    continue
+                data = self._tail_read(server, path, start, size)
+                if not data or nb not in data:
+                    continue
+                if start > indexed:                # 줄 중간에서 시작했으면 다음 줄부터
+                    nl = data.find(b'\n')
+                    data = data[nl + 1:] if nl >= 0 else b''
+                fname = os.path.basename(path)
+                sm = _ChannelStateMachine(needle)
+                for line in data.decode(detect_encoding(data), errors='replace'
+                                        ).splitlines(keepends=True):
+                    sm.feed(line, source=fname)
+                sm.flush()
+                for c in sm.emitted:
+                    if not c.get('ucid'):
+                        continue
+                    end_by = c.get('end_by')
+                    if end_by == 'EOF(미마감)':
+                        end_by = '통화 중 (색인 전)'
+                    out.append({
+                        'server': label, 'channel': c.get('channel'),
+                        'ucid': c.get('ucid'),
+                        'start_time': c.get('start_time'), 'end_time': c.get('end_time'),
+                        'end_by': end_by, 'cust_id': c.get('cust_id'),
+                        'phone': c.get('phone'), 'line_count': c.get('line_count'),
+                        'source_files': [fname], 'lines': c.get('lines'),
+                        'unindexed': True,
+                    })
+        if out:
+            logger.info("ARS 색인 전 구간에서 %d콜 보충 (%s)", len(out), needle)
+        return out
+
+    @staticmethod
+    def _merge_calls(calls, extra):
+        """UCID 로 합친다. 같은 통화면 줄이 더 많은 쪽."""
+        by = {}
+        for c in list(calls) + list(extra):
+            k = c.get('ucid') or (c.get('server'), c.get('channel'), c.get('start_time'))
+            p_ = by.get(k)
+            if p_ is None or (c.get('line_count') or 0) > (p_.get('line_count') or 0):
+                by[k] = c
+        return sorted(by.values(), key=lambda c: (c.get('start_time') or ''))
+
     # ── 진입점 (인덱스 기반) ────────────────────────────────
     def search_inbound(self, phone=None, cust_id=None):
         """
@@ -639,20 +840,29 @@ class ArsLogFetcher:
         # 대상 서버 라벨(선택된 ARS 서버로 제한)
         targets = get_enabled_servers(server_type='ARS', purpose='inbound',
                                       server_ids=self.server_ids, access_method='unc')
-        labels = [get_server_label(s) for _, s in targets] if targets else None
+        if not targets:
+            # 선택 조건에 맞는 UNC ARS 서버가 없으면 결과도 없어야 한다.
+            # 예전엔 labels=None 을 넘겨 store.search 의 '서버 필터 없음'이 되는 바람에
+            # 선택하지 않은 서버(예: 개발/QA 만 골랐는데 운영)의 콜까지 돌려주고,
+            # 그 파일을 UNC 로 읽으려다 실패해 내용도 비어 나왔다.
+            return {'success': True, 'search_key': needle, 'call_count': 0,
+                    'calls': [], 'errors': self.errors or None}
+        labels = [get_server_label(s) for _, s in targets]
 
         rows = store.search(phone=phone, cust_id=cust_id,
                             start_date=self.start_date, end_date=self.end_date,
-                            servers=labels or None)
-        if not rows:
-            return {'success': True, 'search_key': needle, 'call_count': 0,
-                    'calls': [], 'errors': self.errors or None}
+                            servers=labels)
 
-        # 매칭 콜이 든 파일들의 호스트 연결
-        self.conn.connect_for_paths([r['file_path'] for r in rows])
+        # 매칭 콜이 든 파일 + 오늘 로그 경로의 호스트 연결
+        conn_paths = [r['file_path'] for r in rows]
+        for _, srv in targets:
+            conn_paths += get_log_paths(srv, 'inbound')
+        self.conn.connect_for_paths(conn_paths)
 
-        calls = []
+        calls, tail = [], []
         try:
+            # 방금 끝났거나 진행 중이라 아직 색인에 없는 오늘 통화
+            tail = self._search_today_tail([s for _, s in targets], needle, store)
             for r in rows:
                 lines = self._read_call_lines(
                     r['file_path'], r['start_offset'], r['end_offset'], r['channel'])
@@ -674,7 +884,7 @@ class ArsLogFetcher:
         finally:
             self.conn.disconnect_all()
 
-        calls.sort(key=lambda c: (c.get('start_time') or ''))
+        calls = self._merge_calls(calls, tail)
         return {
             'success': True,
             'search_key': needle,
@@ -699,7 +909,7 @@ class ArsLogFetcher:
         return [l for l in text.splitlines(keepends=True) if _channel_of(l) == channel]
 
     # ── 패턴(정규식) 검색 ──────────────────────────────────
-    def search_by_pattern(self, pattern):
+    def search_by_pattern(self, pattern, deadline=None):
         """
         ARS(UNC) 로그에서 정규식 패턴을 포함하는 라인 원문을 반환.
 
@@ -709,6 +919,7 @@ class ArsLogFetcher:
 
         Returns:
             {'success', 'pattern', 'result_count', 'results':[{line,server,type,file,timestamp}], 'errors'}
+            timestamp 은 표시용 'YYYY-MM-DD HH:MM:SS' (접두부 없으면 HH:MM:SS).
         """
         try:
             rx = re.compile(pattern)
@@ -725,9 +936,16 @@ class ArsLogFetcher:
         dates = self._date_range()
         results = []
 
+        import time as _time
+        partial = False
         try:
             for idx, server in targets:
                 label = get_server_label(server)
+                if deadline is not None and deadline - _time.monotonic() <= 1:
+                    partial = True
+                    self.errors.append({'server': label,
+                                        'error': '시간 초과로 건너뜀'})
+                    continue
                 # inbound + outbound 전체 경로 (패턴 검색은 용도 구분 없음)
                 paths = get_log_paths(server)
                 if not paths:
@@ -756,11 +974,13 @@ class ArsLogFetcher:
                                 'server': label,
                                 'type': 'ARS',
                                 'file': fname,
-                                'timestamp': _time_of(line),
+                                'file_path': path,
+                                'timestamp': _datetime_of(line),
                             })
                     del data  # 다음 파일 전에 해제
         finally:
             self.conn.disconnect_all()
 
         return {'success': True, 'pattern': pattern, 'result_count': len(results),
-                'results': results, 'errors': self.errors if self.errors else None}
+                'results': results, 'partial': partial,
+                'errors': self.errors if self.errors else None}

@@ -9,12 +9,17 @@ topology 뷰어 첫 로딩 1~2분 문제 해결. scenario_store.py 무수정.
 캐시 위치: 환경변수 SCENARIO_CACHE_DIR, 없으면 <최상위>/.scenario_cache_boot
 """
 import os
+import glob
+import time
 import pickle
+import logging
 import hashlib
 import threading
 import functools
 
 import scenario_store as S
+
+logger = logging.getLogger(__name__)
 
 _CACHE_DIR = os.environ.get(
     "SCENARIO_CACHE_DIR",
@@ -22,6 +27,32 @@ _CACHE_DIR = os.environ.get(
 
 _installed = False
 _lock = threading.Lock()
+
+# 같은 것을 두 번 만들지 않기 위한 작업별 잠금.
+# 백그라운드 워밍과 사용자의 요청이 동시에 같은 트리를 만들면 시간이 두 배로
+# 든다. 먼저 시작한 쪽이 끝날 때까지 나머지는 기다렸다가 캐시를 읽는다.
+_keylocks = {}
+_keylock_guard = threading.Lock()
+
+# 준비 상태 — 화면에서 "구성도 준비 중 n/m" 을 보여 주기 위한 값
+STATUS = {"state": "idle", "env": "", "entry": "",
+          "done": 0, "total": 0, "started": 0.0, "elapsed": 0.0}
+
+
+def _keylock(key):
+    with _keylock_guard:
+        lk = _keylocks.get(key)
+        if lk is None:
+            lk = _keylocks[key] = threading.Lock()
+        return lk
+
+
+def status():
+    """현재 준비 상태 (얕은 복사)."""
+    st = dict(STATUS)
+    if st["state"] == "warming" and st["started"]:
+        st["elapsed"] = round(time.time() - st["started"], 1)
+    return st
 
 
 def _folder_sig(env):
@@ -45,14 +76,26 @@ def _disk_cache(fn, tag):
                     return pickle.load(open(dp, "rb"))
                 except Exception:
                     pass
-            result = fn(env, entry, *args, **kwargs)
-            if not (isinstance(result, dict) and result.get("error")):
-                try:
-                    os.makedirs(_CACHE_DIR, exist_ok=True)
-                    pickle.dump(result, open(dp, "wb"))
-                except Exception:
-                    pass
-            return result
+            # 같은 작업을 동시에 두 번 만들지 않는다
+            with _keylock(dp):
+                if os.path.isfile(dp):
+                    try:
+                        return pickle.load(open(dp, "rb"))
+                    except Exception:
+                        pass
+                t0 = time.time()
+                result = fn(env, entry, *args, **kwargs)
+                took = time.time() - t0
+                if took > 3:
+                    logger.info("구성도 생성 %s [%s] %s — %.1f초",
+                                tag, env, os.path.basename(str(entry) or ""), took)
+                if not (isinstance(result, dict) and result.get("error")):
+                    try:
+                        os.makedirs(_CACHE_DIR, exist_ok=True)
+                        pickle.dump(result, open(dp, "wb"))
+                    except Exception:
+                        pass
+                return result
         except Exception:
             return fn(env, entry, *args, **kwargs)
     return wrapper
@@ -75,28 +118,55 @@ def install():
     return True
 
 
+def _prune_stale():
+    """지금 서명과 무관한 옛 캐시 파일 정리 (시나리오를 덮어쓰면 계속 쌓인다)."""
+    try:
+        sigs = {_folder_sig(e) for e in _safe_envs()}
+    except Exception:
+        return
+    keep = 0
+    for f in glob.glob(os.path.join(_CACHE_DIR, "*.pkl")):
+        try:
+            if os.path.getmtime(f) < time.time() - 14 * 86400:
+                os.unlink(f)
+            else:
+                keep += 1
+        except OSError:
+            pass
+
+
 def _warm_env(env):
     try:
         roots = S.get_menu_roots(env).get("roots", [])
     except Exception:
         roots = []
-    for entry in roots:
-        for fn_name, kw in (("get_tree_doc", {}),
-                            ("build_locator", {}),
-                            ("get_bizflow", {"mode": "summary"}),
-                            ("get_bizflow", {"mode": "detail"})):
+    jobs = (("get_tree_doc", {}),
+            ("build_locator", {}),
+            ("get_bizflow", {"mode": "summary"}),
+            ("get_bizflow", {"mode": "detail"}))
+    STATUS.update({"state": "warming", "env": env, "entry": "",
+                   "done": 0, "total": len(roots) * len(jobs)})
+    logger.info("구성도 준비 시작 — [%s] 진입점 %d개", env, len(roots))
+    for i, entry in enumerate(roots, 1):
+        STATUS["entry"] = os.path.basename(str(entry))
+        for fn_name, kw in jobs:
             fn = getattr(S, fn_name, None)
-            if not callable(fn):
-                continue
-            try:
-                fn(env, entry, **kw)
-            except Exception:
-                pass
+            if callable(fn):
+                try:
+                    fn(env, entry, **kw)
+                except Exception as e:
+                    logger.debug("구성도 준비 건너뜀 %s/%s: %s", entry, fn_name, e)
+            STATUS["done"] += 1
+        if i % 5 == 0 or i == len(roots):
+            logger.info("구성도 준비 %d/%d — [%s]", i, len(roots), env)
 
 
 def warm(pages_by_env=None):
     if not _installed:
         install()
+    t0 = time.time()
+    STATUS.update({"state": "warming", "started": t0, "done": 0, "total": 0})
+    _prune_stale()
     envs = list(pages_by_env.keys()) if pages_by_env else _safe_envs()
     for env in envs:
         if pages_by_env:
@@ -111,6 +181,10 @@ def warm(pages_by_env=None):
                             pass
         else:
             _warm_env(env)
+    STATUS.update({"state": "done", "entry": "",
+                   "elapsed": round(time.time() - t0, 1)})
+    logger.info("구성도 준비 완료 — %.1f초 (환경 %d개)",
+                time.time() - t0, len(envs))
 
 
 def _safe_envs():
