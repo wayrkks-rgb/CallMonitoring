@@ -468,9 +468,8 @@ class ArsSshLogFetcher(ArsLogFetcher):
         rows = store.search(phone=phone, cust_id=cust_id,
                             start_date=self.start_date, end_date=self.end_date,
                             servers=labels)
-        if not rows:
-            return {'success': True, 'search_key': needle, 'call_count': 0,
-                    'calls': [], 'errors': self.errors or None}
+        # 방금 끝났거나 진행 중이라 아직 색인에 없는 오늘 통화
+        tail = self._search_today_tail([s for _, s in servers], needle, store)
 
         calls = []
         for r in rows:
@@ -490,9 +489,31 @@ class ArsSshLogFetcher(ArsLogFetcher):
                 'source_files': [r.get('file_path') or ''],
                 'lines': lines,
             })
-        calls.sort(key=lambda c: (c.get('start_time') or ''))
+        calls = self._merge_calls(calls, tail)
         return {'success': True, 'search_key': needle, 'call_count': len(calls),
                 'calls': calls, 'errors': self.errors or None}
+
+    # ── 오늘 · 색인 전 구간 직접 검색용 IO (SSH) ─────────────
+    def _tail_size(self, server, path):
+        size, _status = self.io.stat(server, path)
+        return size
+
+    def _tail_read(self, server, path, start, end):
+        parts = []
+        try:
+            for _pos, chunk in self.io.read_chunks(server, path, start, end):
+                parts.append(chunk)
+        except ArsReadError as e:
+            logger.warning("색인 전 구간 읽기 중단 %s: %s", os.path.basename(path), e)
+        return b''.join(parts) or None
+
+    def _tail_may_have(self, server, path, needle, length):
+        # 원격 구간 읽기는 base64 로 오가 비싸다. 구간이 크면 서버에서 먼저
+        # 찾아보고 없으면 읽지 않는다.
+        if length <= 2 * 1024 * 1024:
+            return True
+        lines, err = self.io.grep(server, [path], needle, regex=False)
+        return bool(lines) or bool(err)
 
     def _read_call_lines_ssh(self, server, row):
         """SSH 오프셋 읽기로 콜 구간만 회수 → 해당 채널 라인만.

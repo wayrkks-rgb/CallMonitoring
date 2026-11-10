@@ -699,6 +699,128 @@ class ArsLogFetcher:
             call['server'] = label
         return sm.emitted
 
+    # ── 오늘 · 색인 전 구간 직접 검색 ──────────────────────
+    # 색인은 '끝난 통화'를 5초 주기로 담는다. 그 사이(또는 색인이 밀렸을 때)
+    # 방금 끝났거나 아직 진행 중인 통화는 색인에 없어 조회가 안 됐다.
+    # 오늘 파일의 '색인이 아직 안 읽은 구간'만 직접 읽어 보충한다.
+    TAIL_CAP = 32 * 1024 * 1024      # 색인이 많이 밀렸을 때 직접 읽을 최대치(끝에서부터)
+
+    def _today_live_paths(self, paths, now):
+        """오늘 쓰이는 중인 파일 (시간별이면 현재 · 직전 시각)."""
+        today = now.strftime('%Y-%m-%d')
+        out = []
+        for tmpl in paths:
+            if '{HH}' in tmpl:
+                prev = now - timedelta(hours=1)
+                if prev.strftime('%Y-%m-%d') == today:
+                    out.append(self._expand(tmpl, today, prev.hour))
+                out.append(self._expand(tmpl, today, now.hour))
+            else:
+                out.append(self._expand(tmpl, today))
+        return list(dict.fromkeys(out))
+
+    # 파일 IO 훅 — UNC 는 직접 읽고, SSH 페처가 덮어쓴다
+    def _tail_size(self, server, path):
+        try:
+            return os.path.getsize(path)
+        except OSError:
+            return None
+
+    def _tail_read(self, server, path, start, end):
+        try:
+            with open(path, 'rb') as f:
+                f.seek(start)
+                return f.read(end - start)
+        except OSError:
+            return None
+
+    def _tail_may_have(self, server, path, needle, size):
+        """읽기 전에 값싸게 '있을 수도 있는지' 확인 (UNC 는 바로 읽으므로 항상 True)."""
+        return True
+
+    def _search_today_tail(self, servers, needle, store):
+        """오늘 파일의 색인 전 구간에서 needle 이 든 통화를 직접 조립한다.
+        실패해도 색인 결과는 그대로 나가야 하므로 예외는 경고로만 남긴다."""
+        try:
+            return self._search_today_tail_impl(servers, needle, store)
+        except Exception as e:
+            logger.warning("색인 전 구간 직접 검색 실패: %s", e)
+            self.errors.append({'error': '오늘 최신 구간 직접 검색 실패', 'details': str(e)})
+            return []
+
+    def _search_today_tail_impl(self, servers, needle, store):
+        now = datetime.now()
+        if now.strftime('%Y-%m-%d') not in self._date_range():
+            return []
+        nb = needle.encode('utf-8', 'ignore')
+        out = []
+        for server in servers:
+            label = get_server_label(server)
+            for path in self._today_live_paths(get_log_paths(server, 'inbound'), now):
+                try:
+                    st = store.get_scan_state(path) if store is not None else None
+                except Exception:
+                    st = None
+                if st and st.get('sealed'):
+                    continue                       # 끝까지 색인된 파일
+                size = self._tail_size(server, path)
+                if not size:
+                    continue
+                indexed = (st.get('pending_offset') or 0) if st else 0
+                start = indexed
+                if size - start > self.TAIL_CAP:
+                    self.errors.append({
+                        'server': label, 'error': 'ARS 색인 지연',
+                        'details': f'{os.path.basename(path)}: 색인 전 '
+                                   f'{(size - start) / 1048576:.0f}MB — 최근 '
+                                   f'{self.TAIL_CAP // 1048576}MB 만 직접 검색했습니다'})
+                    start = size - self.TAIL_CAP
+                if start >= size:
+                    continue
+                if not self._tail_may_have(server, path, needle, size - start):
+                    continue
+                data = self._tail_read(server, path, start, size)
+                if not data or nb not in data:
+                    continue
+                if start > indexed:                # 줄 중간에서 시작했으면 다음 줄부터
+                    nl = data.find(b'\n')
+                    data = data[nl + 1:] if nl >= 0 else b''
+                fname = os.path.basename(path)
+                sm = _ChannelStateMachine(needle)
+                for line in data.decode(detect_encoding(data), errors='replace'
+                                        ).splitlines(keepends=True):
+                    sm.feed(line, source=fname)
+                sm.flush()
+                for c in sm.emitted:
+                    if not c.get('ucid'):
+                        continue
+                    end_by = c.get('end_by')
+                    if end_by == 'EOF(미마감)':
+                        end_by = '통화 중 (색인 전)'
+                    out.append({
+                        'server': label, 'channel': c.get('channel'),
+                        'ucid': c.get('ucid'),
+                        'start_time': c.get('start_time'), 'end_time': c.get('end_time'),
+                        'end_by': end_by, 'cust_id': c.get('cust_id'),
+                        'phone': c.get('phone'), 'line_count': c.get('line_count'),
+                        'source_files': [fname], 'lines': c.get('lines'),
+                        'unindexed': True,
+                    })
+        if out:
+            logger.info("ARS 색인 전 구간에서 %d콜 보충 (%s)", len(out), needle)
+        return out
+
+    @staticmethod
+    def _merge_calls(calls, extra):
+        """UCID 로 합친다. 같은 통화면 줄이 더 많은 쪽."""
+        by = {}
+        for c in list(calls) + list(extra):
+            k = c.get('ucid') or (c.get('server'), c.get('channel'), c.get('start_time'))
+            p_ = by.get(k)
+            if p_ is None or (c.get('line_count') or 0) > (p_.get('line_count') or 0):
+                by[k] = c
+        return sorted(by.values(), key=lambda c: (c.get('start_time') or ''))
+
     # ── 진입점 (인덱스 기반) ────────────────────────────────
     def search_inbound(self, phone=None, cust_id=None):
         """
@@ -730,15 +852,17 @@ class ArsLogFetcher:
         rows = store.search(phone=phone, cust_id=cust_id,
                             start_date=self.start_date, end_date=self.end_date,
                             servers=labels)
-        if not rows:
-            return {'success': True, 'search_key': needle, 'call_count': 0,
-                    'calls': [], 'errors': self.errors or None}
 
-        # 매칭 콜이 든 파일들의 호스트 연결
-        self.conn.connect_for_paths([r['file_path'] for r in rows])
+        # 매칭 콜이 든 파일 + 오늘 로그 경로의 호스트 연결
+        conn_paths = [r['file_path'] for r in rows]
+        for _, srv in targets:
+            conn_paths += get_log_paths(srv, 'inbound')
+        self.conn.connect_for_paths(conn_paths)
 
-        calls = []
+        calls, tail = [], []
         try:
+            # 방금 끝났거나 진행 중이라 아직 색인에 없는 오늘 통화
+            tail = self._search_today_tail([s for _, s in targets], needle, store)
             for r in rows:
                 lines = self._read_call_lines(
                     r['file_path'], r['start_offset'], r['end_offset'], r['channel'])
@@ -760,7 +884,7 @@ class ArsLogFetcher:
         finally:
             self.conn.disconnect_all()
 
-        calls.sort(key=lambda c: (c.get('start_time') or ''))
+        calls = self._merge_calls(calls, tail)
         return {
             'success': True,
             'search_key': needle,

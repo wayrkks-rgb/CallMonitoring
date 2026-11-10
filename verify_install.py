@@ -141,6 +141,16 @@ CHECKS = [
      "닫는 줄 없이 끝난 콜 자동 마감 — 없으면 매 회차 몇 시간치를 다시 읽는다"),
     ("app.py", "today_gap_remaining",
      "/ars-index-status 에 라이브 · 오늘 앞부분 진행 표시"),
+    ("ars_fetcher.py", "def _search_today_tail",
+     "ARS 조회 시 오늘 '색인 전 구간' 직접 검색 — 없으면 방금 끝난 · 진행 중 통화가 안 보인다"),
+    ("ars_ssh_fetcher.py", "def _tail_may_have",
+     "ARS(SSH) 색인 전 구간 읽기"),
+    ("ssh_fetcher.py", "def active_log_variant",
+     "AICC 오늘 파일(날짜 없는 이름) 검색 — 없으면 오늘 로그는 하루 지나야 검색된다"),
+    ("templates/index.html", "function rollAutoDates",
+     "화면을 켜 둔 채 자정이 지나도 검색 날짜를 오늘로 — 없으면 계속 어제로 검색된다"),
+    ("diag_today.py", "오늘 파일",
+     "오늘 로그 진단 스크립트"),
 ]
 
 

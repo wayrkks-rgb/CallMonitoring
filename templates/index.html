@@ -1255,22 +1255,48 @@
         }
 
         // =====================================================================
+        // 날짜 자동 넘김 — 화면을 켜 둔 채 자정이 지나면 '오늘' 기본값이 어제로
+        //   남아, 검색(자동 새로고침 포함)이 계속 어제 날짜로 나가 당일 콜이 안
+        //   보였다. 기본값으로 채운 칸(사용자가 바꾸지 않은 칸)만 오늘로 옮긴다.
+        // =====================================================================
+        const AUTO_DATE_IDS = ['startDate', 'endDate', 'patternStartDate',
+                               'patternEndDate', 'analysisStartDate', 'analysisEndDate'];
+        function setAutoDate(id, today) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.value = today;
+            el.dataset.auto = today;          // '자동으로 채운 값' 표시
+        }
+        function rollAutoDates() {
+            const today = kstToday();
+            AUTO_DATE_IDS.forEach(id => {
+                const el = document.getElementById(id);
+                if (!el || !el.dataset.auto) return;
+                if (el.value !== el.dataset.auto) {   // 사용자가 직접 바꾼 칸은 그대로
+                    delete el.dataset.auto;
+                    return;
+                }
+                if (el.dataset.auto !== today) setAutoDate(id, today);
+            });
+        }
+
+        // =====================================================================
         // DOMContentLoaded — 날짜 기본값 오늘 세팅 + 메뉴 이벤트 리스너 등록
         // =====================================================================
         document.addEventListener('DOMContentLoaded', function() {
             // 날짜 기본값: 한국시간 오늘
             const today = kstToday();
-            document.getElementById('startDate').value = today;
-            document.getElementById('endDate').value   = today;
-            document.getElementById('patternStartDate').value = today;
-            document.getElementById('patternEndDate').value   = today;
+            setAutoDate('startDate', today);
+            setAutoDate('endDate', today);
+            setAutoDate('patternStartDate', today);
+            setAutoDate('patternEndDate', today);
 
             // 검색 섹션 서버 체크박스 로드
             loadSearchServerCheckboxes();
 
             // 분석 섹션 날짜 기본값
-            document.getElementById('analysisStartDate').value = today;
-            document.getElementById('analysisEndDate').value   = today;
+            setAutoDate('analysisStartDate', today);
+            setAutoDate('analysisEndDate', today);
 
             // 메뉴 전환
             document.querySelectorAll('.menu-item').forEach(item => {
@@ -1439,6 +1465,7 @@
         }
 
         async function searchByCustId(silent = false) {
+            rollAutoDates();
             const custId    = document.getElementById('custId').value.trim();
             const startDate = document.getElementById('startDate').value;
             const endDate   = document.getElementById('endDate').value;
@@ -1506,6 +1533,7 @@
 
         // ── 인바운드 통합 검색 (ARS→VGW)
         async function searchInbound(silent = false) {
+            rollAutoDates();
             const val       = document.getElementById('custId').value.trim();
             const startDate = document.getElementById('startDate').value;
             const endDate   = document.getElementById('endDate').value;
@@ -1903,8 +1931,8 @@
             _selOutboundKey = null;
             document.getElementById('custId').value     = '';
             const today = kstToday();
-            document.getElementById('startDate').value  = today;
-            document.getElementById('endDate').value    = today;
+            setAutoDate('startDate', today);
+            setAutoDate('endDate', today);
             document.getElementById('searchResults').innerHTML = `
                 <div class="no-results"><h3>검색을 시작하세요</h3>
                 <p>고객정보(핸드폰,고객ID)를 입력하고 "고객 Call Flow 검색" 버튼을 눌러주세요</p></div>`;
@@ -1970,6 +1998,7 @@
         }
 
         async function searchByPattern() {
+            rollAutoDates();
             const pattern   = document.getElementById('searchPattern').value.trim();
             const startDate = document.getElementById('patternStartDate').value;
             const endDate   = document.getElementById('patternEndDate').value;
@@ -2769,6 +2798,7 @@
         let _analysisResults = [];
 
         async function analyzeErrorCalls() {
+            rollAutoDates();
             const pattern   = document.getElementById('analysisPattern').value.trim();
             const startDate = document.getElementById('analysisStartDate').value;
             const endDate   = document.getElementById('analysisEndDate').value;

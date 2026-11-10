@@ -7,6 +7,9 @@ SSH 원격 로그 수집 모듈
 - 서버측 grep으로 전송량 최소화
 """
 
+import os
+import re
+from datetime import datetime
 import shlex
 import subprocess
 import logging
@@ -17,6 +20,31 @@ from config_manager import DATE_PLACEHOLDERS
 
 logger = logging.getLogger(__name__)
 
+
+
+_DATE_TOK = r'\{(?:YYYY-MM-DD|YYYYMMDD|YYYY|MMDD|MM|DD|HH)\}'
+_DATE_RUN = _DATE_TOK + r'(?:[-_.]?' + _DATE_TOK + r')*'
+
+
+def active_log_variant(log_path):
+    """날짜 경로 템플릿 → 오늘 '쓰이는 중'인 파일 이름 (날짜 없는 이름).
+
+      /log/api.{YYYY-MM-DD}.log  → /log/api.log
+      /log/vgw_{YYYYMMDD}.log    → /log/vgw.log
+      /log/api.log.{YYYY-MM-DD}  → /log/api.log
+      /log/{YYYYMMDD}/api.log    → None (날짜가 폴더에 있으면 오늘 파일도 그 폴더에 있다)
+    """
+    d, name = os.path.split(log_path)
+    if not re.search(_DATE_TOK, name):
+        return None
+    new = re.sub(r'[-_.]' + _DATE_RUN, '', name, count=1)
+    if new == name:
+        new = re.sub(_DATE_RUN + r'[-_.]?', '', name, count=1)
+    if re.search(_DATE_TOK, new) or not new or new == name:
+        return None
+    if re.search(_DATE_TOK, d):
+        return None
+    return (d + '/' + new) if d else new
 
 class ErrorType(Enum):
     """에러 유형 정의"""
@@ -323,12 +351,22 @@ class OpenSSHLogFetcher:
             expanded_list = []
             if dates:
                 expanded_list = [self._expand_placeholders(log_path, d) for d in dates]
+                # 오늘 쓰이고 있는 파일은 이름에 날짜가 없는 경우가 많다
+                # (logback/log4j: api.log 에 쓰다가 자정에 api.2026-11-10.log 로
+                #  넘김). 날짜 이름만 보면 오늘 로그는 하루가 지나야 검색된다.
+                if datetime.now().strftime('%Y-%m-%d') in dates:
+                    act = active_log_variant(log_path)
+                    if act:
+                        expanded_list.append(act)
             else:
                 # 날짜 미지정 → 날짜 자리를 와일드카드로
                 w = log_path
                 for tok in DATE_PLACEHOLDERS:
                     w = w.replace(tok, '*')
                 expanded_list = [w]
+                act = active_log_variant(log_path)     # 오늘 쓰이는 중인 파일
+                if act:
+                    expanded_list.append(act)
 
             for e in expanded_list:
                 # 시(HH)는 날짜로 특정되지 않으므로 항상 와일드카드
